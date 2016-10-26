@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Runtime.Serialization;
 using ServiceStack.Auth;
 using ServiceStack.Web;
@@ -52,48 +51,53 @@ namespace ServiceStack
         [DataMember(Order = 35)] public List<string> Roles { get; set; }
         [DataMember(Order = 36)] public List<string> Permissions { get; set; }
         [DataMember(Order = 37)] public virtual bool IsAuthenticated { get; set; }
-        [DataMember(Order = 38)] public virtual string Sequence { get; set; }
-        [DataMember(Order = 39)] public long Tag { get; set; }
-        [DataMember(Order = 40)] public List<IAuthTokens> ProviderOAuthAccess { get; set; }
+        [DataMember(Order = 38)] public virtual bool FromToken { get; set; }
+        [DataMember(Order = 39)] public virtual string ProfileUrl { get; set; }
+        [DataMember(Order = 40)] public virtual string Sequence { get; set; }
+        [DataMember(Order = 41)] public long Tag { get; set; }
+        [DataMember(Order = 42)] public List<IAuthTokens> ProviderOAuthAccess { get; set; }
 
         public virtual bool IsAuthorized(string provider)
         {
-            var tokens = ProviderOAuthAccess.FirstOrDefault(x => x.Provider == provider);
+            var tokens = this.GetAuthTokens(provider);
             return AuthenticateService.GetAuthProvider(provider).IsAuthorizedSafe(this, tokens);
         }
 
-        public virtual bool HasPermission(string permission)
+        public virtual bool HasPermission(string permission, IAuthRepository authRepo)
         {
-            var managesRoles = HostContext.TryResolve<IAuthRepository>() as IManageRoles;
-            if (managesRoles != null)
+            if (UserAuthId == null)
+                return false;
+
+            if (!FromToken) //If populated from a token it should have the complete list of permissions
             {
-                return managesRoles.HasPermission(this.UserAuthId, permission);
+                var managesRoles = authRepo as IManageRoles;
+                if (managesRoles != null)
+                {
+                    return managesRoles.HasPermission(this.UserAuthId, permission);
+                }
             }
 
             return this.Permissions != null && this.Permissions.Contains(permission);
         }
 
-        public virtual bool HasRole(string role)
+        public virtual bool HasRole(string role, IAuthRepository authRepo)
         {
-            var managesRoles = HostContext.TryResolve<IAuthRepository>() as IManageRoles;
-            if (managesRoles != null)
+            if (UserAuthId == null)
+                return false;
+
+            if (!FromToken) //If populated from a token it should have the complete list of roles
             {
-                return managesRoles.HasRole(this.UserAuthId, role);
+                var managesRoles = authRepo as IManageRoles;
+                if (managesRoles != null)
+                {
+                    return managesRoles.HasRole(this.UserAuthId, role);
+                }
             }
 
             return this.Roles != null && this.Roles.Contains(role);
         }
 
-        [Obsolete("Use OnRegistered(IRequest httpReq, IAuthSession session, IServiceBase service)")]
-        public virtual void OnRegistered(IServiceBase service) { }
-
-        public virtual void OnRegistered(IRequest httpReq, IAuthSession session, IServiceBase service)
-        {
-#pragma warning disable 612, 618
-            OnRegistered(service);
-#pragma warning restore 612, 618
-        }
-
+        public virtual void OnRegistered(IRequest httpReq, IAuthSession session, IServiceBase service) {}
         public virtual void OnAuthenticated(IServiceBase authService, IAuthSession session, IAuthTokens tokens, Dictionary<string, string> authInfo) { }
         public virtual void OnLogout(IServiceBase authService) {}
         public virtual void OnCreated(IRequest httpReq) {}
@@ -113,18 +117,43 @@ namespace ServiceStack
 
     public static class AuthSessionExtensions
     {
-        public static IAuthTokens GetOAuthTokens(this IAuthSession session, string provider)
+        public static void AddAuthToken(this IAuthSession session, IAuthTokens tokens)
         {
-            foreach (var tokens in session.ProviderOAuthAccess)
+            if (session.ProviderOAuthAccess == null)
+                session.ProviderOAuthAccess = new List<IAuthTokens>();
+
+            session.ProviderOAuthAccess.Add(tokens);
+        }
+
+        public static List<IAuthTokens> GetAuthTokens(this IAuthSession session)
+        {
+            return session.ProviderOAuthAccess ?? TypeConstants<IAuthTokens>.EmptyList;
+        }
+
+        public static IAuthTokens GetAuthTokens(this IAuthSession session, string provider)
+        {
+            if (session.ProviderOAuthAccess != null)
             {
-                if (string.Compare(tokens.Provider, provider, StringComparison.InvariantCultureIgnoreCase) == 0)
-                    return tokens;
+                foreach (var tokens in session.ProviderOAuthAccess)
+                {
+                    if (string.Compare(tokens.Provider, provider, StringComparison.OrdinalIgnoreCase) == 0)
+                        return tokens;
+                }
             }
             return null;
         }
 
+        [Obsolete("Use GetAuthTokens()")]
+        public static IAuthTokens GetOAuthTokens(this IAuthSession session, string provider)
+        {
+            return GetAuthTokens(session, provider);
+        }
+
         public static string GetProfileUrl(this IAuthSession authSession, string defaultUrl = null)
         {
+            if (authSession.ProfileUrl != null)
+                return authSession.ProfileUrl;
+
             var profile = HostContext.TryResolve<IAuthMetadataProvider>();
             return profile == null ? defaultUrl : profile.GetProfileUrl(authSession, defaultUrl);
         }
@@ -133,9 +162,14 @@ namespace ServiceStack
         {
             if (authSession != null)
             {
-                return authSession.UserName != null && authSession.UserName.IndexOf('@') < 0
-                    ? authSession.UserName
-                    : authSession.DisplayName.SafeVarName();
+                long id;
+                var displayName = authSession.UserName != null 
+                    && authSession.UserName.IndexOf('@') == -1      // don't use email
+                    && !long.TryParse(authSession.UserName, out id) // don't use id number
+                        ? authSession.UserName
+                        : authSession.DisplayName.SafeVarName();
+
+                return displayName;
             }
             return null;
         }

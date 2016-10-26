@@ -1,4 +1,6 @@
-﻿using System;
+﻿#if !NETSTANDARD1_6
+
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -55,7 +57,7 @@ namespace ServiceStack.MiniProfiler.SqlFormatters
                 return timing.CommandString;
             }
 
-            StringBuilder buffer = new StringBuilder();
+            StringBuilder buffer = StringBuilderCache.Allocate();
 
             buffer.Append("DECLARE ");
 
@@ -106,11 +108,10 @@ namespace ServiceStack.MiniProfiler.SqlFormatters
                 buffer.Append(niceName).Append(" ").Append(resolvedType).Append(" = ").Append(PrepareValue(p));
             }
 
-            return buffer
+            return StringBuilderCache.ReturnAndFree(buffer
                 .AppendLine()
                 .AppendLine()
-                .Append(timing.CommandString)
-                .ToString();
+                .Append(timing.CommandString));
         }
 
         static readonly string[] dontQuote = new string[] {"Int16","Int32","Int64", "Boolean"};
@@ -136,3 +137,5 @@ namespace ServiceStack.MiniProfiler.SqlFormatters
         }
     }
 }
+
+#endif

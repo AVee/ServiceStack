@@ -1,4 +1,5 @@
-﻿// Most of this class is sourced from the MONO project in the existing file:
+﻿#if !NETSTANDARD1_6
+// Most of this class is sourced from the MONO project in the existing file:
 //
 // https://github.com/mono/mono/blob/master/mcs/class/System.Web/System.Web/HttpRequest.cs
 //
@@ -238,18 +239,14 @@ namespace ServiceStack.Host.HttpListener
             return String.Compare(ContentType, ct, true, Helpers.InvariantCulture) == 0;
         }
 
-
-
-
-
         void LoadWwwForm()
         {
             using (Stream input = GetSubStream(InputStream))
             {
                 using (StreamReader s = new StreamReader(input, ContentEncoding))
                 {
-                    StringBuilder key = new StringBuilder();
-                    StringBuilder value = new StringBuilder();
+                    var key = StringBuilderCache.Allocate();
+                    var value = StringBuilderCacheAlt.Allocate();
                     int c;
 
                     while ((c = s.Read()) != -1)
@@ -282,6 +279,9 @@ namespace ServiceStack.Host.HttpListener
                         AddRawKeyValue(key, value);
 
                     EndSubStream(input);
+
+                    StringBuilderCache.Free(key);
+                    StringBuilderCacheAlt.Free(key);
                 }
             }
         }
@@ -390,21 +390,20 @@ namespace ServiceStack.Host.HttpListener
 
             public override string ToString()
             {
-                StringBuilder result = new StringBuilder();
+                var sb = StringBuilderCache.Allocate();
                 foreach (string key in AllKeys)
                 {
-                    if (result.Length > 0)
-                        result.Append('&');
+                    if (sb.Length > 0)
+                        sb.Append('&');
 
                     if (key != null && key.Length > 0)
                     {
-                        result.Append(key);
-                        result.Append('=');
+                        sb.Append(key);
+                        sb.Append('=');
                     }
-                    result.Append(Get(key));
+                    sb.Append(Get(key));
                 }
-
-                return result.ToString();
+                return StringBuilderCache.ReturnAndFree(sb);
             }
         }
 
@@ -743,7 +742,6 @@ namespace ServiceStack.Host.HttpListener
                     sb.Length--;
 
                 return sb.ToString();
-
             }
 
             static string GetContentDispositionAttribute(string l, string name)
@@ -951,3 +949,4 @@ namespace ServiceStack.Host.HttpListener
          
     }
 }
+#endif

@@ -11,7 +11,7 @@
     <RootNamespace>ServiceStack</RootNamespace>
     <AssemblyName>ServiceStack.Interfaces</AssemblyName>
     <TargetFrameworkVersion>v4.0</TargetFrameworkVersion>
-    <TargetFrameworkProfile>Profile136</TargetFrameworkProfile>
+    <TargetFrameworkProfile>Profile344</TargetFrameworkProfile>
     <FileAlignment>512</FileAlignment>
     <ProjectTypeGuids>{786C830F-07A1-408B-BD7F-6EE04809D6DB};{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}</ProjectTypeGuids>
   </PropertyGroup>
@@ -79,7 +79,9 @@
     <Compile Include="DataAnnotations\CompositeKeyAttribute.cs" />
     <Compile Include="DataAnnotations\ComputeAttribute.cs" />
     <Compile Include="DataAnnotations\CustomFieldAttribute.cs" />
+    <Compile Include="DataAnnotations\CustomSelectAttribute.cs" />
     <Compile Include="DataAnnotations\DescriptionAttribute.cs" />
+    <Compile Include="DataAnnotations\EnumAsIntAttribute.cs" />
     <Compile Include="DataAnnotations\ExcludeAttribute.cs" />
     <Compile Include="DataAnnotations\PostCreateTableAttribute.cs" />
     <Compile Include="DataAnnotations\PostDropTableAttribute.cs" />
@@ -138,6 +140,7 @@
     </Compile>
     <Compile Include="Data\OptimisticConcurrencyException.cs" />
     <Compile Include="ICompressor.cs" />
+    <Compile Include="IHasErrorCode.cs" />
     <Compile Include="IO\IVirtualFiles.cs" />
     <Compile Include="IO\IEndpoint.cs" />
     <Compile Include="IQuery.cs" />
@@ -146,6 +149,9 @@
     <Compile Include="IRestGateway.cs" />
     <Compile Include="IEncryptedClient.cs" />
     <Compile Include="ISequenceSource.cs" />
+    <Compile Include="IServiceGateway.cs" />
+    <Compile Include="Redis\RedisGeo.cs" />
+    <Compile Include="Web\IServiceGatewayFactory.cs" />
     <Compile Include="IUrlFilter.cs" />
     <Compile Include="Logging\GenericLogFactory.cs" />
     <Compile Include="Logging\GenericLogger.cs" />
@@ -317,6 +323,7 @@
     <Compile Include="IService.cs" />
     <Compile Include="SwaggerType.cs" />
     <Compile Include="NamedConnectionAttribute.cs" />
+    <Compile Include="UploadFile.cs" />
     <Compile Include="Web\INameValueCollection.cs" />
     <Compile Include="Web\IRequiresRequestStream.cs" />
     <Compile Include="RequestAttributes.cs">
@@ -425,9 +432,6 @@
     <Compile Include="IOneWayClient.cs">
       <SubType>Code</SubType>
     </Compile>
-    <Compile Include="IReplyClient.cs">
-      <SubType>Code</SubType>
-    </Compile>
     <Compile Include="IResponseStatus.cs">
       <SubType>Code</SubType>
     </Compile>
@@ -438,9 +442,6 @@
       <SubType>Code</SubType>
     </Compile>
     <Compile Include="IServiceClient.cs">
-      <SubType>Code</SubType>
-    </Compile>
-    <Compile Include="IServiceClientAsync.cs">
       <SubType>Code</SubType>
     </Compile>
     <Compile Include="Web\IStreamWriter.cs">

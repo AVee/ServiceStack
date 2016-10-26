@@ -1,12 +1,18 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
+using System.Data;
+using System.Net;
 using System.Runtime.Serialization;
+using System.Security.Cryptography;
 using Funq;
 using ServiceStack;
 using ServiceStack.Api.Swagger;
+using ServiceStack.Auth;
 using ServiceStack.Data;
 using ServiceStack.DataAnnotations;
 using ServiceStack.OrmLite;
 using ServiceStack.Razor;
+using ServiceStack.Text;
 using ServiceStack.Validation;
 using ServiceStack.Web;
 
@@ -18,9 +24,21 @@ namespace RazorRockstars.Console.Files
         public AppHost() : base("Test Razor", typeof(AppHost).Assembly) { }
 
         public bool EnableRazor = true;
+        public bool EnableAuth = false;
+        public RSAParameters? JwtRsaPrivateKey;
+        public RSAParameters? JwtRsaPublicKey;
+        public bool JwtEncryptPayload = false;
+        public List<byte[]> FallbackAuthKeys = new List<byte[]>();
+        public List<RSAParameters> FallbackPublicKeys = new List<RSAParameters>();
+        public Func<IRequest, IAuthRepository> GetAuthRepositoryFn;
+
+        public Action<Container> Use;
 
         public override void Configure(Container container)
         {
+            if (Use != null)
+                Use(container);
+
             if (EnableRazor)
                 Plugins.Add(new RazorFormat());
 
@@ -32,20 +50,69 @@ namespace RazorRockstars.Console.Files
             Plugins.Add(new ValidationFeature());
             container.RegisterValidators(typeof(AutoValidationValidator).Assembly);
 
+            var dbFactory = new OrmLiteConnectionFactory(":memory:", SqliteDialect.Provider);
+            container.Register<IDbConnectionFactory>(dbFactory);
 
-            container.Register<IDbConnectionFactory>(
-                new OrmLiteConnectionFactory(":memory:", SqliteDialect.Provider));
+            dbFactory.RegisterConnection("testdb", "~/App_Data/test.sqlite".MapAbsolutePath(), SqliteDialect.Provider);
 
-            using (var db = container.Resolve<IDbConnectionFactory>().OpenDbConnection())
+            using (var db = dbFactory.OpenDbConnection())
             {
                 db.DropAndCreateTable<Rockstar>(); //Create table if not exists
                 db.Insert(Rockstar.SeedData); //Populate with seed data
             }
 
-            SetConfig(new HostConfig {
+            using (var db = dbFactory.OpenDbConnection("testdb"))
+            {
+                db.DropAndCreateTable<Rockstar>(); //Create table if not exists
+                db.Insert(new Rockstar(1, "Test", "Database", 27));
+            }
+
+            SetConfig(new HostConfig
+            {
                 AdminAuthSecret = "secret",
                 DebugMode = true,
             });
+
+            if (EnableAuth)
+            {
+                Plugins.Add(new AuthFeature(() => new AuthUserSession(),
+                    new IAuthProvider[] {
+                        new BasicAuthProvider(AppSettings),
+                        new CredentialsAuthProvider(AppSettings),
+                        new ApiKeyAuthProvider(AppSettings) { RequireSecureConnection = false },
+                        new JwtAuthProvider(AppSettings)
+                        {
+                            AuthKey = JwtRsaPrivateKey != null || JwtRsaPublicKey != null ? null : AesUtils.CreateKey(),
+                            RequireSecureConnection = false,
+                            HashAlgorithm = JwtRsaPrivateKey != null || JwtRsaPublicKey != null ? "RS256" : "HS256",
+                            PublicKey = JwtRsaPublicKey,
+                            PrivateKey = JwtRsaPrivateKey,
+                            EncryptPayload = JwtEncryptPayload,
+                            FallbackAuthKeys = FallbackAuthKeys,
+                            FallbackPublicKeys = FallbackPublicKeys,
+                        },
+                    })
+                {
+                    IncludeRegistrationService = true,
+                });
+
+                container.Resolve<IAuthRepository>().InitSchema();
+            }
+        }
+
+        public override IDbConnection GetDbConnection(IRequest req = null)
+        {
+            var apiKey = req.GetApiKey();
+            return apiKey != null && apiKey.Environment == "test"
+                ? TryResolve<IDbConnectionFactory>().OpenDbConnection("testdb")
+                : base.GetDbConnection(req);
+        }
+
+        public override IAuthRepository GetAuthRepository(IRequest req = null)
+        {
+            return GetAuthRepositoryFn != null
+                ? GetAuthRepositoryFn(req)
+                : base.GetAuthRepository(req);
         }
 
         private static void Main(string[] args)
@@ -62,12 +129,12 @@ namespace RazorRockstars.Console.Files
     public class Rockstar
     {
         public static Rockstar[] SeedData = new[] {
-            new Rockstar(1, "Jimi", "Hendrix", 27), 
-            new Rockstar(2, "Janis", "Joplin", 27), 
-            new Rockstar(3, "Jim", "Morrisson", 27), 
-            new Rockstar(4, "Kurt", "Cobain", 27),              
-            new Rockstar(5, "Elvis", "Presley", 42), 
-            new Rockstar(6, "Michael", "Jackson", 50), 
+            new Rockstar(1, "Jimi", "Hendrix", 27),
+            new Rockstar(2, "Janis", "Joplin", 27),
+            new Rockstar(3, "Jim", "Morrisson", 27),
+            new Rockstar(4, "Kurt", "Cobain", 27),
+            new Rockstar(5, "Elvis", "Presley", 42),
+            new Rockstar(6, "Michael", "Jackson", 50),
         };
 
         [AutoIncrement]
@@ -91,7 +158,7 @@ namespace RazorRockstars.Console.Files
     [Route("/rockstars/aged/{Age}")]
     [Route("/rockstars/delete/{Delete}")]
     [Route("/rockstars/{Id}")]
-    public class Rockstars
+    public class Rockstars : IReturn<RockstarsResponse>
     {
         public int Id { get; set; }
         public string FirstName { get; set; }
@@ -140,6 +207,17 @@ namespace RazorRockstars.Console.Files
     public class PartialChildModel
     {
         public string SomeProperty { get; set; }
+    }
+
+    public class GetAllRockstars : IReturn<RockstarsResponse> { }
+
+    [Authenticate]
+    public class SecureServices : Service
+    {
+        public object Any(GetAllRockstars request)
+        {
+            return new RockstarsResponse { Results = Db.Select<Rockstar>() };
+        }
     }
 
     public class RockstarsService : Service
@@ -212,7 +290,7 @@ namespace RazorRockstars.Console.Files
             };
         }
 
-        public void Any(RedirectWithoutQueryString request) {}
+        public void Any(RedirectWithoutQueryString request) { }
     }
 
     public class RedirectWithoutQueryStringFilterAttribute : RequestFilterAttribute
@@ -292,6 +370,50 @@ namespace RazorRockstars.Console.Files
             {
                 View = "/" + request.PathInfo
             };
+        }
+    }
+
+    [Route("/test/session")]
+    public class TestSession : IReturn<TestSessionResponse> { }
+
+    [Route("/test/session/view")]
+    public class TestSessionView : IReturn<TestSessionResponse> { }
+
+    public class TestSessionResponse
+    {
+        public string UserAuthId { get; set; }
+        public bool IsAuthenticated { get; set; }
+    }
+
+    public class TestSessionAttribute : RequestFilterAttribute
+    {
+        public override void Execute(IRequest req, IResponse res, object requestDto)
+        {
+            var session = req.GetSession();
+            if (!session.IsAuthenticated)
+            {
+                res.StatusCode = (int)HttpStatusCode.Unauthorized;
+                res.EndRequestWithNoContent();
+            }
+        }
+    }
+
+    public class TestSessionService : Service
+    {
+        [TestSession]
+        public object Any(TestSession request)
+        {
+            var session = base.Request.GetSession();
+            return new TestSessionResponse
+            {
+                UserAuthId = session.UserAuthId,
+                IsAuthenticated = session.IsAuthenticated,
+            };
+        }
+
+        public object Any(TestSessionView request)
+        {
+            return new TestSessionResponse();
         }
     }
 }

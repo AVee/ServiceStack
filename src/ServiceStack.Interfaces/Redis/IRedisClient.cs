@@ -5,7 +5,7 @@
 // Authors:
 //   Demis Bellot (demis.bellot@gmail.com)
 //
-// Copyright 2015 Service Stack LLC. All Rights Reserved.
+// Copyright 2016 Service Stack LLC. All Rights Reserved.
 //
 // Licensed under the same terms of ServiceStack.
 //
@@ -139,6 +139,17 @@ namespace ServiceStack.Redis
         long CountHyperLog(string key);
         void MergeHyperLogs(string toKey, params string[] fromKeys);
 
+        //GEO APIs
+        long AddGeoMember(string key, double longitude, double latitude, string member);
+        long AddGeoMembers(string key, params RedisGeo[] geoPoints);
+        double CalculateDistanceBetweenGeoMembers(string key, string fromMember, string toMember, string unit = null);
+        string[] GetGeohashes(string key, params string[] members);
+        List<RedisGeo> GetGeoCoordinates(string key, params string[] members);
+        string[] FindGeoMembersInRadius(string key, double longitude, double latitude, double radius, string unit);
+        List<RedisGeoResult> FindGeoResultsInRadius(string key, double longitude, double latitude, double radius, string unit, int? count = null, bool? sortByNearest = null);
+        string[] FindGeoMembersInRadius(string key, string member, double radius, string unit);
+        List<RedisGeoResult> FindGeoResultsInRadius(string key, string member, double radius, string unit, int? count = null, bool? sortByNearest = null);
+
         /// <summary>
         /// Returns a high-level typed client API
         /// </summary>
@@ -235,6 +246,7 @@ namespace ServiceStack.Redis
         bool AddRangeToSortedSet(string setId, List<string> values, double score);
         bool AddRangeToSortedSet(string setId, List<string> values, long score);
         bool RemoveItemFromSortedSet(string setId, string value);
+        long RemoveItemsFromSortedSet(string setId, List<string> values);
         string PopItemWithLowestScoreFromSortedSet(string setId);
         string PopItemWithHighestScoreFromSortedSet(string setId);
         bool SortedSetContainsItem(string setId, string value);

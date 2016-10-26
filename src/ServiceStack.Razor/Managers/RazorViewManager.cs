@@ -209,7 +209,7 @@ namespace ServiceStack.Razor.Managers
             //Views should be uniquely named and stored in any deep folder structure
             if (pagePath.StartsWithIgnoreCase("views/") && !pagePath.EndsWithIgnoreCase(DefaultLayoutFile))
             {
-                var viewName = pagePath.SplitOnLast('.').First().SplitOnLast('/').Last();
+                var viewName = pagePath.LastLeftPart('.').LastRightPart('/');
                 ViewNamesMap[viewName] = pagePath;
             }
 
@@ -260,7 +260,7 @@ namespace ServiceStack.Razor.Managers
             string contextParentDir = contextRelativePath;
             do
             {
-                contextParentDir = (contextParentDir ?? "").SplitOnLast('/').First();
+                contextParentDir = (contextParentDir ?? "").LastLeftPart('/');
 
                 var path = CombinePaths(contextParentDir, layoutFile);
                 var layoutPage = GetPage(path);
@@ -278,8 +278,21 @@ namespace ServiceStack.Razor.Managers
 
         public virtual RazorPage GetPartialPage(IHttpRequest httpReq, string partialName)
         {
+            var normalizedPathInfo = httpReq != null
+                ? httpReq.PathInfo
+                : "/";
+
+            if (httpReq != null)
+            {
+                if (!httpReq.RawUrl.EndsWith("/"))
+                    normalizedPathInfo = normalizedPathInfo.ParentDirectory();
+
+                normalizedPathInfo = normalizedPathInfo.CombineWith(partialName).TrimStart('/');
+            }
+
             // Look for partial from same directory or view page
-            return GetContentPage(httpReq.GetDirectoryPath().CombineWith(partialName)) 
+            return GetContentPage(normalizedPathInfo)
+                ?? GetContentPage(normalizedPathInfo.CombineWith(RazorFormat.Instance.DefaultPageName))
                 ?? GetViewPage(partialName);
         }
 

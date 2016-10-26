@@ -1,6 +1,6 @@
 using System;
 using System.Collections.Generic;
-using System.Text;
+using ServiceStack.Text;
 
 namespace ServiceStack.Metadata
 {
@@ -15,10 +15,10 @@ namespace ServiceStack.Metadata
 
         public override string ToString()
         {
-            var sb = new StringBuilder();
+            var sb = StringBuilderCache.Allocate();
             if (!string.IsNullOrEmpty(Title))
             {
-                sb.AppendFormat("<h3>{0}</h3>", Title);
+                sb.Append($"<h3>{Title}</h3>");
             }
 
             sb.Append("<table>");
@@ -60,7 +60,7 @@ namespace ServiceStack.Metadata
             sb.Append("</tbody>");
             sb.Append("</table>");
 
-            return sb.ToString();
+            return StringBuilderCache.ReturnAndFree(sb);
         }
     }
 }

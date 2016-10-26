@@ -6,6 +6,7 @@ using System.Threading;
 using RabbitMQ.Client;
 using ServiceStack.Logging;
 using ServiceStack.Messaging;
+using ServiceStack.Text;
 
 namespace ServiceStack.RabbitMq
 {
@@ -101,7 +102,7 @@ namespace ServiceStack.RabbitMq
         {
             set
             {
-                PriortyQueuesWhitelist = new string[0];
+                PriortyQueuesWhitelist = TypeConstants.EmptyStringArray;
             }
         }
 
@@ -116,7 +117,7 @@ namespace ServiceStack.RabbitMq
         /// </summary>
         public bool DisablePublishingResponses
         {
-            set { PublishResponsesWhitelist = value ? new string[0] : null; }
+            set { PublishResponsesWhitelist = value ? TypeConstants.EmptyStringArray : null; }
         }
 
         private IConnection connection;
@@ -226,27 +227,14 @@ namespace ServiceStack.RabbitMq
 
         public virtual string GetStatus()
         {
-            switch (Interlocked.CompareExchange(ref status, 0, 0))
-            {
-                case WorkerStatus.Disposed:
-                    return "Disposed";
-                case WorkerStatus.Stopped:
-                    return "Stopped";
-                case WorkerStatus.Stopping:
-                    return "Stopping";
-                case WorkerStatus.Starting:
-                    return "Starting";
-                case WorkerStatus.Started:
-                    return "Started";
-            }
-            return null;
+            return WorkerStatus.ToString(Interlocked.CompareExchange(ref status, 0, 0));
         }
 
         public virtual string GetStatsDescription()
         {
             lock (workers)
             {
-                var sb = new StringBuilder("#MQ SERVER STATS:\n");
+                var sb = StringBuilderCache.Allocate().Append("#MQ SERVER STATS:\n");
                 sb.AppendLine("===============");
                 sb.AppendLine("Current Status: " + GetStatus());
                 sb.AppendLine("Listening On: " + string.Join(", ", workers.ToList().ConvertAll(x => x.QueueName).ToArray()));
@@ -260,7 +248,7 @@ namespace ServiceStack.RabbitMq
                     sb.AppendLine(worker.GetStats().ToString());
                     sb.AppendLine("---------------\n");
                 }
-                return sb.ToString();
+                return StringBuilderCache.ReturnAndFree(sb);
             }
         }
 
@@ -404,21 +392,31 @@ namespace ServiceStack.RabbitMq
                             case WorkerOperation.Stop:
                                 Log.Debug("Stop Command Issued");
 
-                                if (Interlocked.CompareExchange(ref status, WorkerStatus.Stopped, WorkerStatus.Started) != WorkerStatus.Started)
+                                Interlocked.CompareExchange(ref status, WorkerStatus.Stopping, WorkerStatus.Started);
+                                try
+                                {
+                                    StopWorkerThreads();
+                                }
+                                finally
+                                {
                                     Interlocked.CompareExchange(ref status, WorkerStatus.Stopped, WorkerStatus.Stopping);
-
-                                StopWorkerThreads();
+                                }
                                 return; //exits
 
                             case WorkerOperation.Restart:
                                 Log.Debug("Restart Command Issued");
 
-                                if (Interlocked.CompareExchange(ref status, WorkerStatus.Stopped, WorkerStatus.Started) != WorkerStatus.Started)
+                                Interlocked.CompareExchange(ref status, WorkerStatus.Stopping, WorkerStatus.Started);
+                                try
+                                {
+                                    StopWorkerThreads();
+                                }
+                                finally
+                                {
                                     Interlocked.CompareExchange(ref status, WorkerStatus.Stopped, WorkerStatus.Stopping);
+                                }
 
-                                StopWorkerThreads();
                                 StartWorkerThreads();
-
                                 Interlocked.CompareExchange(ref status, WorkerStatus.Started, WorkerStatus.Stopped);
                                 break; //continues
                         }
@@ -461,6 +459,13 @@ namespace ServiceStack.RabbitMq
                     Monitor.Pulse(msgLock);
                 }
             }
+        }
+
+        public virtual void WaitForWorkersToStop(TimeSpan? timeout=null)
+        {
+            ExecExtensions.RetryUntilTrue(
+                () => Interlocked.CompareExchange(ref status, 0, 0) == WorkerStatus.Stopped,
+                timeout);            
         }
 
         public virtual void Restart()
@@ -515,7 +520,7 @@ namespace ServiceStack.RabbitMq
         void DisposeWorkerThreads()
         {
             Log.Debug("Disposing all Rabbit MQ Server worker threads...");
-            if (workers != null) Array.ForEach(workers, x => x.Dispose());
+            if (workers != null) workers.Each(x => x.Dispose());
         }
 
         void WorkerErrorHandler(RabbitMqWorker source, Exception ex)

@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Runtime.Serialization;
 using System.Threading.Tasks;
 using ServiceStack.Host.Handlers;
 using ServiceStack.MiniProfiler;
@@ -60,10 +59,7 @@ namespace ServiceStack.Host
         // Set from SSHHF.GetHandlerForPathInfo()
         public string ResponseContentType { get; set; }
 
-        public override bool RunAsAsync()
-        {
-            return true;
-        }
+        public override bool RunAsAsync() => true;
 
         public override Task ProcessRequestAsync(IRequest httpReq, IResponse httpRes, string operationName)
         {
@@ -71,7 +67,7 @@ namespace ServiceStack.Host
             {
                 var appHost = HostContext.AppHost;
                 if (appHost.ApplyPreRequestFilters(httpReq, httpRes)) 
-                    return EmptyTask;
+                    return TypeConstants.EmptyTask;
                 
                 var restPath = GetRestPath(httpReq.Verb, httpReq.PathInfo);
                 if (restPath == null)
@@ -96,15 +92,19 @@ namespace ServiceStack.Host
                 var request = httpReq.Dto = CreateRequest(httpReq, restPath);
 
                 if (appHost.ApplyRequestFilters(httpReq, httpRes, request)) 
-                    return EmptyTask;
+                    return TypeConstants.EmptyTask;
 
                 var rawResponse = GetResponse(httpReq, request);
-                return HandleResponse(rawResponse, response => 
+
+                if (httpRes.IsClosed)
+                    return TypeConstants.EmptyTask;
+
+                return HandleResponse(rawResponse, response =>
                 {
                     response = appHost.ApplyResponseConverters(httpReq, response);
 
                     if (appHost.ApplyResponseFilters(httpReq, httpRes, response)) 
-                        return EmptyTask;
+                        return TypeConstants.EmptyTask;
 
                     if (responseContentType.Contains("jsv") && !string.IsNullOrEmpty(httpReq.QueryString[Keywords.Debug]))
                         return WriteDebugResponse(httpRes, response);
@@ -143,7 +143,7 @@ namespace ServiceStack.Host
                 if (dtoFromBinder != null)
                     return HostContext.AppHost.ApplyRequestConverters(httpReq, dtoFromBinder);
 
-                var requestParams = httpReq.GetRequestParams();
+                var requestParams = httpReq.GetFlattenedRequestParams();
                 return HostContext.AppHost.ApplyRequestConverters(httpReq,
                     CreateRequest(httpReq, restPath, requestParams));
             }
@@ -173,7 +173,7 @@ namespace ServiceStack.Host
         public override object CreateRequest(IRequest httpReq, string operationName)
         {
             if (this.RestPath == null)
-                throw new ArgumentNullException("No RestPath found");
+                throw new ArgumentNullException(nameof(RestPath), "No RestPath found");
 
             return CreateRequest(httpReq, this.RestPath);
         }

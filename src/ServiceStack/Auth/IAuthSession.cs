@@ -21,11 +21,15 @@ namespace ServiceStack.Auth
         List<string> Roles { get; set; }
         List<string> Permissions { get; set; }
         bool IsAuthenticated { get; set; }
+        bool FromToken { get; set; } //Partially restored from JWT
+        string ProfileUrl { get; set; }
+
         //Used for digest authentication replay protection
         string Sequence { get; set; }
 
-        bool HasRole(string role);
-        bool HasPermission(string permission);
+        bool HasRole(string role, IAuthRepository authRepo);
+        bool HasPermission(string permission, IAuthRepository authRepo);
+
         bool IsAuthorized(string provider);
 
         void OnRegistered(IRequest httpReq, IAuthSession session, IServiceBase service);

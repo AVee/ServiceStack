@@ -86,6 +86,7 @@ namespace ServiceStack.WebHost.IntegrationTests.Tests
             AssertResponse<FileUploadResponse>((HttpWebResponse)webResponse, r =>
             {
                 var expectedContents = new StreamReader(uploadForm.OpenRead()).ReadToEnd();
+                Assert.That(r.Name, Is.EqualTo("upload"));
                 Assert.That(r.FileName, Is.EqualTo(uploadForm.Name));
                 Assert.That(r.ContentLength, Is.EqualTo(uploadForm.Length));
                 Assert.That(r.ContentType, Is.EqualTo(MimeTypes.GetMimeType(uploadForm.Name)));
@@ -118,6 +119,7 @@ namespace ServiceStack.WebHost.IntegrationTests.Tests
             var response = client.PostFileWithRequest<FileUploadResponse>(Config.ServiceStackBaseUri + "/fileuploads", uploadFile, request);
 
             var expectedContents = new StreamReader(uploadFile.OpenRead()).ReadToEnd();
+            Assert.That(response.Name, Is.EqualTo("upload"));
             Assert.That(response.FileName, Is.EqualTo(uploadFile.Name));
             Assert.That(response.ContentLength, Is.EqualTo(uploadFile.Length));
             Assert.That(response.Contents, Is.EqualTo(expectedContents));
@@ -134,10 +136,11 @@ namespace ServiceStack.WebHost.IntegrationTests.Tests
 
             var request = new FileUpload();
             var response = client.PostFileWithRequest<FileUploadResponse>(
-                Config.ServiceStackBaseUri + "/fileuploads?CustomerId=123&CustomerName=Foo,Bar", 
+                Config.ServiceStackBaseUri + "/fileuploads?CustomerId=123&CustomerName=Foo,Bar",
                 uploadFile, request);
 
             var expectedContents = new StreamReader(uploadFile.OpenRead()).ReadToEnd();
+            Assert.That(response.Name, Is.EqualTo("upload"));
             Assert.That(response.FileName, Is.EqualTo(uploadFile.Name));
             Assert.That(response.ContentLength, Is.EqualTo(uploadFile.Length));
             Assert.That(response.Contents, Is.EqualTo(expectedContents));

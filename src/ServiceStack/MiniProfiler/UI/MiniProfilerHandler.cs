@@ -1,4 +1,6 @@
-﻿using System;
+﻿#if !NETSTANDARD1_6
+
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -7,6 +9,7 @@ using System.Web;
 using ServiceStack.Host.AspNet;
 using ServiceStack.Host.Handlers;
 using ServiceStack.MiniProfiler.Helpers;
+using ServiceStack.Text;
 using ServiceStack.Web;
 
 namespace ServiceStack.MiniProfiler.UI
@@ -79,7 +82,7 @@ namespace ServiceStack.MiniProfiler.UI
         public static string GetFileNameWithoutExtension(string pathInfo)
         {
             //Path.GetFileNameWithoutExtension() throws exception with illegal chars
-            return pathInfo.SplitOnLast('.')[0].SplitOnLast('/').Last();
+            return pathInfo.LastLeftPart('.').LastRightPart('/');
         }
 
 		//internal static void RegisterRoutes()
@@ -245,8 +248,8 @@ namespace ServiceStack.MiniProfiler.UI
 		private static string ResultsFullPage(IResponse httpRes, Profiler profiler)
 		{
 			httpRes.ContentType = "text/html";
-			return new StringBuilder()
-				.AppendLine("<html><head>")
+			var sb = StringBuilderCache.Allocate()
+                .AppendLine("<html><head>")
 				.AppendFormat("<title>{0} ({1} ms) - MvcMiniProfiler Results</title>", profiler.Name, profiler.DurationMilliseconds)
 				.AppendLine()
 				.AppendLine("<script type='text/javascript' src='https://ajax.googleapis.com/ajax/libs/jquery/1.6.2/jquery.min.js'></script>")
@@ -254,11 +257,11 @@ namespace ServiceStack.MiniProfiler.UI
 				.Append(Profiler.ToJson(profiler))
 				.AppendLine(";</script>")
 				.Append(RenderIncludes(profiler)) // figure out how to better pass display options
-				.AppendLine("</head><body><div class='profiler-result-full'></div></body></html>")
-				.ToString();
-		}
+				.AppendLine("</head><body><div class='profiler-result-full'></div></body></html>");
+            return StringBuilderCache.ReturnAndFree(sb);
+        }
 
-		private static string GetResource(string filename)
+        private static string GetResource(string filename)
 		{
 			filename = filename.ToLower();
 			string result;
@@ -294,3 +297,5 @@ namespace ServiceStack.MiniProfiler.UI
 		}
 	}
 }
+
+#endif

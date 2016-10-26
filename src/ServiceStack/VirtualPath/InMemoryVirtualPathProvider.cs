@@ -13,7 +13,7 @@ namespace ServiceStack.VirtualPath
     /// <summary>
     /// In Memory Virtual Path Provider.
     /// </summary>
-    public class InMemoryVirtualPathProvider : AbstractVirtualPathProviderBase, IWriteableVirtualPathProvider
+    public class InMemoryVirtualPathProvider : AbstractVirtualPathProviderBase, IVirtualFiles, IWriteableVirtualPathProvider
     {
         public InMemoryVirtualPathProvider(IAppHost appHost)
             : base(appHost)
@@ -28,20 +28,11 @@ namespace ServiceStack.VirtualPath
 
         public const char DirSep = '/';
 
-        public override IVirtualDirectory RootDirectory
-        {
-            get { return rootDirectory; }
-        }
+        public override IVirtualDirectory RootDirectory => rootDirectory;
 
-        public override string VirtualPathSeparator
-        {
-            get { return "/"; }
-        }
+        public override string VirtualPathSeparator => "/";
 
-        public override string RealPathSeparator
-        {
-            get { return "/"; }
-        }
+        public override string RealPathSeparator => "/";
 
         protected override void Initialize() {}
 
@@ -53,19 +44,27 @@ namespace ServiceStack.VirtualPath
 
         public IVirtualDirectory GetDirectory(string dirPath)
         {
-            return new InMemoryVirtualDirectory(this, dirPath);
+            var dir = new InMemoryVirtualDirectory(this, dirPath);
+            return dir.Files.Any()
+                ? dir
+                : null;
         }
 
         public override bool DirectoryExists(string virtualPath)
         {
-            return GetDirectory(virtualPath).Files.Any();
+            return GetDirectory(virtualPath) != null;
+        }
+
+        private IVirtualDirectory CreateDirectory(string dirPath)
+        {
+            return new InMemoryVirtualDirectory(this, dirPath);
         }
 
         public void WriteFile(string filePath, string textContents)
         {
             filePath = SanitizePath(filePath);
             DeleteFile(filePath);
-            this.files.Add(new InMemoryVirtualFile(this, GetDirectory(GetDirPath(filePath)))
+            this.files.Add(new InMemoryVirtualFile(this, CreateDirectory(GetDirPath(filePath)))
             {
                 FilePath = filePath,
                 TextContents = textContents,
@@ -77,7 +76,7 @@ namespace ServiceStack.VirtualPath
         {
             filePath = SanitizePath(filePath);
             DeleteFile(filePath);
-            this.files.Add(new InMemoryVirtualFile(this, GetDirectory(GetDirPath(filePath)))
+            this.files.Add(new InMemoryVirtualFile(this, CreateDirectory(GetDirPath(filePath)))
             {
                 FilePath = filePath,
                 ByteContents = stream.ReadFully(),
@@ -88,6 +87,44 @@ namespace ServiceStack.VirtualPath
         public void WriteFiles(IEnumerable<IVirtualFile> files, Func<IVirtualFile, string> toPath = null)
         {
             this.CopyFrom(files, toPath);
+        }
+
+        public void AppendFile(string filePath, string textContents)
+        {
+            filePath = SanitizePath(filePath);
+
+            var existingFile = GetFile(filePath);
+            var text = existingFile != null
+                ? existingFile.ReadAllText() + textContents
+                : textContents;
+
+            DeleteFile(filePath);
+
+            this.files.Add(new InMemoryVirtualFile(this, CreateDirectory(GetDirPath(filePath)))
+            {
+                FilePath = filePath,
+                TextContents = text,
+                FileLastModified = DateTime.UtcNow,
+            });
+        }
+
+        public void AppendFile(string filePath, Stream stream)
+        {
+            filePath = SanitizePath(filePath);
+
+            var existingFile = GetFile(filePath);
+            var bytes = existingFile != null
+                ? existingFile.ReadAllBytes().Combine(stream.ReadFully())
+                : stream.ReadFully();
+
+            DeleteFile(filePath);
+
+            this.files.Add(new InMemoryVirtualFile(this, CreateDirectory(GetDirPath(filePath)))
+            {
+                FilePath = filePath,
+                ByteContents = bytes,
+                FileLastModified = DateTime.UtcNow,
+            });
         }
 
         public void DeleteFile(string filePath)
@@ -166,9 +203,7 @@ namespace ServiceStack.VirtualPath
                 ? null
                 : (filePath[0] == DirSep ? filePath.Substring(1) : filePath);
 
-            return sanitizedPath != null
-                ? sanitizedPath.Replace('\\', DirSep)
-                : null;
+            return sanitizedPath?.Replace('\\', DirSep);
         }
     }
 
@@ -184,32 +219,17 @@ namespace ServiceStack.VirtualPath
         }
         
         public DateTime DirLastModified { get; set; }
-        public override DateTime LastModified
-        {
-            get { return DirLastModified; }
-        }
+        public override DateTime LastModified => DirLastModified;
 
-        public override IEnumerable<IVirtualFile> Files
-        {
-            get { return pathProvider.GetImmediateFiles(DirPath); }
-        }
+        public override IEnumerable<IVirtualFile> Files => pathProvider.GetImmediateFiles(DirPath);
 
-        public override IEnumerable<IVirtualDirectory> Directories
-        {
-            get { return pathProvider.GetImmediateDirectories(DirPath); }
-        }
+        public override IEnumerable<IVirtualDirectory> Directories => pathProvider.GetImmediateDirectories(DirPath);
 
         public string DirPath { get; set; }
 
-        public override string VirtualPath
-        {
-            get { return DirPath; }
-        }
+        public override string VirtualPath => DirPath;
 
-        public override string Name
-        {
-            get { return DirPath != null ? DirPath.SplitOnLast(InMemoryVirtualPathProvider.DirSep).Last() : null; }
-        }
+        public override string Name => DirPath?.LastRightPart(InMemoryVirtualPathProvider.DirSep);
 
         public override IVirtualFile GetFile(string virtualPath)
         {
@@ -265,40 +285,18 @@ namespace ServiceStack.VirtualPath
             this.FileLastModified = DateTime.MinValue;            
         }
 
-        public string DirPath
-        {
-            get { return base.Directory.VirtualPath; }
-        }
+        public string DirPath => base.Directory.VirtualPath;
 
         public string FilePath { get; set; }
 
-        public override string Name
-        {
-            get { return FilePath.SplitOnLast(InMemoryVirtualPathProvider.DirSep).Last(); }
-        }
+        public override string Name => FilePath.LastRightPart(InMemoryVirtualPathProvider.DirSep);
 
-        public override string VirtualPath
-        {
-            get { return FilePath; }
-        }
+        public override string VirtualPath => FilePath;
 
         public DateTime FileLastModified { get; set; }
-        public override DateTime LastModified
-        {
-            get { return FileLastModified; }
-        }
+        public override DateTime LastModified => FileLastModified;
 
-        public override long Length
-        {
-            get
-            {
-                return TextContents != null ? 
-                    TextContents.Length 
-                  : ByteContents != null ? 
-                    ByteContents.Length : 
-                    0;
-            }
-        }
+        public override long Length => TextContents?.Length ?? (ByteContents?.Length ?? 0);
 
         public string TextContents { get; set; }
 

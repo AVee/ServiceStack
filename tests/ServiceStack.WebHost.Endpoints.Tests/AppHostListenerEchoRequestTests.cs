@@ -4,7 +4,9 @@ using System.Threading;
 using Funq;
 using NUnit.Framework;
 using ServiceStack.Host.Handlers;
+#if !NETCORE_SUPPORT
 using ServiceStack.Host.HttpListener;
+#endif
 using ServiceStack.Text;
 
 namespace ServiceStack.WebHost.Endpoints.Tests
@@ -15,12 +17,13 @@ namespace ServiceStack.WebHost.Endpoints.Tests
         public class AppHost : AppHostHttpListenerBase
         {
             public AppHost()
-                : base("Echo AppHost", typeof(AppHost).Assembly)
+                : base("Echo AppHost", typeof(AppHost).GetAssembly())
             {
             }
 
             public override void Configure(Container container) { }
 
+#if !NETCORE_SUPPORT
             public override ListenerRequest CreateRequest(HttpListenerContext httpContext, string operationName)
             {
                 var req = new ListenerRequest(httpContext, operationName, RequestAttributes.None)
@@ -30,6 +33,7 @@ namespace ServiceStack.WebHost.Endpoints.Tests
                 req.RequestAttributes = req.GetAttributes();
                 return req;
             }
+#endif
         }
 
         [Route("/echo")]
@@ -151,7 +155,8 @@ namespace ServiceStack.WebHost.Endpoints.Tests
                 requestBody: "Param=" + param.UrlEncode(),
                 contentType: MimeTypes.FormUrlEncoded, accept: MimeTypes.Json);
 
-            var value = JsonObject.Parse(json)["Param"];
+            var value = JsonObject.Parse(json)["Param"]
+                        ?? JsonObject.Parse(json)["param"];
 
             Assert.That(value, Is.EqualTo(param));
         }

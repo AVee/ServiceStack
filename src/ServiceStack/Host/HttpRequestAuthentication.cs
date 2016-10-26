@@ -8,14 +8,22 @@ namespace ServiceStack.Host
 {
     public static class HttpRequestAuthentication
     {
-        public static string GetBasicAuth(this IRequest httpReq)
+        public static string GetBearerToken(this IRequest httpReq)
         {
             var auth = httpReq.Headers[HttpHeaders.Authorization];
             if (auth == null) return null;
 
-            var parts = auth.Split(' ');
-            if (parts.Length != 2) return null;
-            return parts[0].ToLower() == "basic" ? parts[1] : null;
+            var pos = auth.IndexOf(' ');
+            return auth.Substring(0, pos).EqualsIgnoreCase("Bearer") ? auth.Substring(pos + 1) : null;
+        }
+
+        public static string GetBasicAuth(this IRequest httpReq)
+        {
+            var auth = httpReq.Authorization;
+            if (auth == null) return null;
+
+            var pos = auth.IndexOf(' ');
+            return auth.Substring(0, pos).EqualsIgnoreCase("Basic") ? auth.Substring(pos + 1) : null;
         }
 
         public static KeyValuePair<string, string>? GetBasicAuthUserAndPassword(this IRequest httpReq)
@@ -23,8 +31,8 @@ namespace ServiceStack.Host
             var userPassBase64 = httpReq.GetBasicAuth();
             if (userPassBase64 == null) return null;
             var userPass = Encoding.UTF8.GetString(Convert.FromBase64String(userPassBase64));
-            var parts = userPass.SplitOnFirst(':');
-            return new KeyValuePair<string, string>(parts[0], parts[1]);
+            var pos = userPass.IndexOf(':');
+            return new KeyValuePair<string, string>(userPass.Substring(0, pos), userPass.Substring(pos + 1));
         }
 
         public static Dictionary<string,string> GetDigestAuth(this IRequest httpReq)
@@ -44,8 +52,8 @@ namespace ServiceStack.Host
             bool inQuotes = false;
             bool escape = false;
 
-            var prts = new List<String> {""};
-            auth = auth.Trim(new char[2]{' ',','});
+            var prts = new List<string> { "" };
+            auth = auth.Trim(' ', ',');
             while (i < auth.Length)
             {
 
@@ -73,16 +81,15 @@ namespace ServiceStack.Host
                 var result = new Dictionary<string, string>();
                 foreach (var item in parts)
                 {
-                    var param = item.Trim().Split(new char[] {'='},2);
-                    result.Add(param[0],param[1].Trim(new char[] {'"'}));
+                    var param = item.Trim().Split(new[] { '=' },2);
+                    result.Add(param[0],param[1].Trim('"'));
                 }
                 result.Add("method", httpReq.Verb);
                 result.Add("userhostaddress", httpReq.UserHostAddress);
                 return result;
             }
-            catch (Exception)
-            {
-            }
+            catch (Exception) {}
+
             return null;
         }
 
@@ -90,7 +97,7 @@ namespace ServiceStack.Host
         {
             Cookie cookie;
             httpReq.Cookies.TryGetValue(cookieName, out cookie);
-            return cookie != null ? cookie.Value : null;
+            return cookie?.Value;
         }
 
         public static string GetItemStringValue(this IRequest httpReq, string itemName)

@@ -1,4 +1,6 @@
-﻿// Copyright (c) Microsoft Open Technologies, Inc. All rights reserved. See License.txt in the project root for license information.
+﻿#if !NETSTANDARD1_6
+
+// Copyright (c) Microsoft Open Technologies, Inc. All rights reserved. See License.txt in the project root for license information.
 
 using System;
 using System.Collections;
@@ -8,6 +10,7 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Text;
 using System.Web;
+using ServiceStack.Text;
 
 namespace ServiceStack.Html
 {
@@ -186,7 +189,7 @@ namespace ServiceStack.Html
         {
             TagBuilder builder = new TagBuilder("option")
             {
-                InnerHtml = HttpUtility.HtmlEncode(item.Text)
+                InnerHtml = PclExportClient.Instance.HtmlEncode(item.Text)
             };
             if (item.Value != null)
             {
@@ -266,7 +269,7 @@ namespace ServiceStack.Html
             }
 
             // Convert each ListItem to an <option> tag
-            StringBuilder listItemBuilder = new StringBuilder();
+            StringBuilder listItemBuilder = StringBuilderCache.Allocate();
 
             // Make optionLabel the first item that gets rendered.
             if (optionLabel != null)
@@ -281,7 +284,7 @@ namespace ServiceStack.Html
 
             TagBuilder tagBuilder = new TagBuilder("select")
             {
-                InnerHtml = listItemBuilder.ToString()
+                InnerHtml = StringBuilderCache.ReturnAndFree(listItemBuilder)
             };
             tagBuilder.MergeAttributes(htmlAttributes);
             tagBuilder.MergeAttribute("name", fullName, true /* replaceExisting */);
@@ -307,3 +310,5 @@ namespace ServiceStack.Html
         }
     }
 }
+
+#endif

@@ -30,13 +30,15 @@
 
 /*** REMINDER: Keep this file in sync with ServiceStack.Text/Pcl.NameValueCollection.cs ***/
 
+using System.IO;
 using System.Net;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using ServiceStack.Text;
+using System.Globalization;
 
-#if NETFX_CORE || PCL || SL5
+#if NETFX_CORE || PCL || SL5 || NETSTANDARD1_1 
 //namespace System.Collections.Specialized
 namespace ServiceStack.Pcl
 {
@@ -1122,7 +1124,6 @@ namespace ServiceStack.Pcl
             AddValue(name, value, typeof(System.Int16));
         }
 
-        [CLSCompliant(false)]
         public void AddValue(string name, UInt16 value)
         {
             AddValue(name, value, typeof(System.UInt16));
@@ -1148,7 +1149,6 @@ namespace ServiceStack.Pcl
             AddValue(name, value, typeof(System.Char));
         }
 
-        [CLSCompliant(false)]
         public void AddValue(string name, SByte value)
         {
             AddValue(name, value, typeof(System.SByte));
@@ -1174,7 +1174,6 @@ namespace ServiceStack.Pcl
             AddValue(name, value, typeof(System.Single));
         }
 
-        [CLSCompliant(false)]
         public void AddValue(string name, UInt32 value)
         {
             AddValue(name, value, typeof(System.UInt32));
@@ -1185,7 +1184,6 @@ namespace ServiceStack.Pcl
             AddValue(name, value, typeof(System.Int64));
         }
 
-        [CLSCompliant(false)]
         public void AddValue(string name, UInt64 value)
         {
             AddValue(name, value, typeof(System.UInt64));
@@ -1253,7 +1251,6 @@ namespace ServiceStack.Pcl
             return converter.ToInt64(value);
         }
 
-        [CLSCompliant(false)]
         public SByte GetSByte(string name)
         {
             object value = GetValue(name, typeof(System.SByte));
@@ -1273,20 +1270,17 @@ namespace ServiceStack.Pcl
             return converter.ToString(value);
         }
 
-        [CLSCompliant(false)]
         public UInt16 GetUInt16(string name)
         {
             object value = GetValue(name, typeof(System.UInt16));
             return converter.ToUInt16(value);
         }
 
-        [CLSCompliant(false)]
         public UInt32 GetUInt32(string name)
         {
             object value = GetValue(name, typeof(System.UInt32));
             return converter.ToUInt32(value);
         }
-        [CLSCompliant(false)]
         public UInt64 GetUInt64(string name)
         {
             object value = GetValue(name, typeof(System.UInt64));
@@ -1514,7 +1508,6 @@ namespace ServiceStack.Pcl
             return System.Convert.ToString(value);
         }
 
-        [CLSCompliant(false)]
         public sbyte ToSByte(object value)
         {
             if (value == null)
@@ -1523,7 +1516,6 @@ namespace ServiceStack.Pcl
             return System.Convert.ToSByte(value);
         }
 
-        [CLSCompliant(false)]
         public ushort ToUInt16(object value)
         {
             if (value == null)
@@ -1532,7 +1524,6 @@ namespace ServiceStack.Pcl
             return System.Convert.ToUInt16(value);
         }
 
-        [CLSCompliant(false)]
         public uint ToUInt32(object value)
         {
             if (value == null)
@@ -1541,7 +1532,6 @@ namespace ServiceStack.Pcl
             return System.Convert.ToUInt32(value);
         }
 
-        [CLSCompliant(false)]
         public ulong ToUInt64(object value)
         {
             if (value == null)
@@ -1585,12 +1575,14 @@ namespace ServiceStack
           = IosPclExportClient.Configure()
 #elif ANDROID
           = AndroidPclExportClient.Configure()
+#elif NETSTANDARD1_1 || NETSTANDARD1_6
+          = NetStandardPclExportClient.Configure()
 #else
           = Net40PclExportClient.Configure()
 #endif
         ;
 
-        public static readonly Task<object> EmptyTask;
+        public static readonly Task<object> EmptyTask = TypeConstants.EmptyTask;
 
         static PclExportClient()
         {
@@ -1609,10 +1601,6 @@ namespace ServiceStack
                     return;
             }
             catch (Exception /*ignore*/) {}
-
-            var tcs = new TaskCompletionSource<object>();
-            tcs.SetResult(null);
-            EmptyTask = tcs.Task;
         }
 
         public static bool ConfigureProvider(string typeName)
@@ -1624,7 +1612,7 @@ namespace ServiceStack
             var mi = type.GetMethod("Configure");
             if (mi != null)
             {
-                mi.Invoke(null, new object[0]);
+                mi.Invoke(null, TypeConstants.EmptyObjectArray);
             }
 
             return true;
@@ -1637,7 +1625,7 @@ namespace ServiceStack
 
         public virtual INameValueCollection ParseQueryString(string query)
         {
-#if SL5 || PCL
+#if SL5 || PCL || NETSTANDARD1_1 || NETSTANDARD1_6
             return ServiceStack.Pcl.HttpUtility.ParseQueryString(query).InWrapper();
 #else
 			return System.Web.HttpUtility.ParseQueryString(query).InWrapper();
@@ -1648,7 +1636,7 @@ namespace ServiceStack
         {
 #if SL5
             return System.Windows.Browser.HttpUtility.UrlEncode(url);
-#elif PCL
+#elif PCL || NETSTANDARD1_1 || NETSTANDARD1_6
             return WebUtility.UrlEncode(url);
 #else
             return System.Web.HttpUtility.UrlEncode(url);
@@ -1659,10 +1647,19 @@ namespace ServiceStack
         {
 #if SL5
             return System.Windows.Browser.HttpUtility.UrlDecode(url);
-#elif PCL
+#elif PCL || NETSTANDARD1_1 || NETSTANDARD1_6
             return WebUtility.UrlDecode(url);
 #else
             return System.Web.HttpUtility.UrlDecode(url);
+#endif
+        }
+
+        public virtual string HtmlAttributeEncode(string html)
+        {
+#if SL5 || PCL || NETSTANDARD1_1 || NETSTANDARD1_6
+            return HtmlEncode(html).Replace("\"","&quot;").Replace("'","&#x27;");
+#else
+            return System.Web.HttpUtility.HtmlAttributeEncode(html);
 #endif
         }
 
@@ -1670,7 +1667,7 @@ namespace ServiceStack
         {
 #if SL5
             return System.Windows.Browser.HttpUtility.HtmlEncode(html);
-#elif PCL
+#elif PCL || NETSTANDARD1_1 || NETSTANDARD1_6
             return WebUtility.HtmlEncode(html);
 #else
             return System.Web.HttpUtility.HtmlEncode(html);
@@ -1681,7 +1678,7 @@ namespace ServiceStack
         {
 #if SL5
             return System.Windows.Browser.HttpUtility.HtmlDecode(html);
-#elif PCL
+#elif PCL || NETSTANDARD1_1 || NETSTANDARD1_6
             return WebUtility.HtmlDecode(html);
 #else
             return System.Web.HttpUtility.HtmlDecode(html);
@@ -1690,6 +1687,9 @@ namespace ServiceStack
  
         public virtual void AddHeader(WebRequest webReq, INameValueCollection headers)
         {
+            if (headers == null)
+                return;
+
             foreach (var name in headers.AllKeys)
             {
                 webReq.Headers[name] = headers[name];
@@ -1715,6 +1715,7 @@ namespace ServiceStack
         {
         }
 
+#if !NETSTANDARD1_1
         public virtual ITimer CreateTimer(TimerCallback cb, TimeSpan timeOut, object state)
         {
 #if PCL
@@ -1724,6 +1725,7 @@ namespace ServiceStack
                 System.Threading.Timer(cb, state, (int)timeOut.TotalMilliseconds, Timeout.Infinite));
 #endif
         }
+#endif
 
         public virtual Task WaitAsync(int waitForMs)
         {
@@ -1731,11 +1733,13 @@ namespace ServiceStack
                 throw new ArgumentOutOfRangeException("waitForMs");
 
             var tcs = new TaskCompletionSource<bool>();
+#if !NETSTANDARD1_1
             Timer timer = null;
             timer = new Timer(self => {
                 tcs.TrySetResult(true);
                 timer.Dispose();
             }, null, waitForMs, Timeout.Infinite);
+#endif
             return tcs.Task;
         }
 
@@ -1756,6 +1760,46 @@ namespace ServiceStack
         {
             Instance = instance;
             Instance.UiContext = SynchronizationContext.Current;
+        }
+
+        public virtual Exception CreateTimeoutException(Exception ex, string errorMsg)
+        {
+            return new WebException("The request timed out", ex, WebExceptionStatus.RequestCanceled, null);
+        }
+
+        public virtual void CloseReadStream(Stream stream)
+        {
+#if PCL || NETSTANDARD1_1 || NETSTANDARD1_6
+            stream.Dispose();
+#else
+            stream.Close();
+#endif
+        }
+
+        public virtual void CloseWriteStream(Stream stream)
+        {
+#if PCL || NETSTANDARD1_1 || NETSTANDARD1_6
+            stream.Dispose();
+#else
+            stream.Close();
+#endif
+        }
+
+        public virtual bool IsWebException(WebException webEx)
+        {
+            return webEx != null && webEx.Response != null;
+        }
+
+        public virtual void SetIfModifiedSince(HttpWebRequest webReq, DateTime lastModified)
+        {
+#if NETSTANDARD1_6
+            if (lastModified == DateTime.MinValue)
+                webReq.Headers.Remove(HttpHeaders.IfModifiedSince);
+            else
+                webReq.Headers[HttpHeaders.IfModifiedSince] = lastModified.ToUniversalTime().ToString("R", new DateTimeFormatInfo());
+#elif !(PCL || SL5 || NETSTANDARD1_1)
+            webReq.IfModifiedSince = lastModified;
+#endif
         }
     }
 

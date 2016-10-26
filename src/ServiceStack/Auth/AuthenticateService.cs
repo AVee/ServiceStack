@@ -1,8 +1,7 @@
 using System;
-using System.Collections.Generic;
 using System.Configuration;
-using ServiceStack.Host;
-using ServiceStack.Text;
+using System.Linq;
+using System.Net;
 using ServiceStack.Web;
 
 namespace ServiceStack.Auth
@@ -23,6 +22,8 @@ namespace ServiceStack.Auth
     public class AuthenticateService : Service
     {
         public const string BasicProvider = "basic";
+        public const string ApiKeyProvider = "apikey";
+        public const string JwtProvider = "jwt";
         public const string CredentialsProvider = "credentials";
         public const string WindowsAuthProvider = "windowsauth";
         public const string CredentialsAliasProvider = "login";
@@ -35,7 +36,10 @@ namespace ServiceStack.Auth
         public static string DefaultOAuthProvider { get; private set; }
         public static string DefaultOAuthRealm { get; private set; }
         public static string HtmlRedirect { get; internal set; }
-        public static IAuthProvider[] AuthProviders { get; private set; }
+        public static Func<IServiceBase, Authenticate, AuthenticateResponse, object> AuthResponseDecorator { get; internal set; }
+        internal static IAuthProvider[] AuthProviders = TypeConstants<IAuthProvider>.EmptyArray;
+        internal static IAuthWithRequest[] AuthWithRequestProviders = TypeConstants<IAuthWithRequest>.EmptyArray;
+        internal static IAuthResponseFilter[] AuthResponseFilters = TypeConstants<IAuthResponseFilter>.EmptyArray;
 
         static AuthenticateService()
         {
@@ -44,28 +48,38 @@ namespace ServiceStack.Auth
 
         public static IAuthProvider GetAuthProvider(string provider)
         {
-            if (AuthProviders == null || AuthProviders.Length == 0) return null;
-            if (provider == LogoutAction) return AuthProviders[0];
+            if (AuthProviders.Length == 0)
+                return null;
+            if (provider == LogoutAction)
+                return AuthProviders[0];
 
             foreach (var authConfig in AuthProviders)
             {
                 if (string.Compare(authConfig.Provider, provider,
-                    StringComparison.InvariantCultureIgnoreCase) == 0)
+                    StringComparison.OrdinalIgnoreCase) == 0)
                     return authConfig;
             }
 
             return null;
         }
 
+        public static IAuthProvider[] GetAuthProviders()
+        {
+            return AuthProviders ?? TypeConstants<IAuthProvider>.EmptyArray;
+        }
+
         public static void Init(Func<IAuthSession> sessionFactory, params IAuthProvider[] authProviders)
         {
             if (authProviders.Length == 0)
-                throw new ArgumentNullException("authProviders");
+                throw new ArgumentNullException(nameof(authProviders));
 
             DefaultOAuthProvider = authProviders[0].Provider;
             DefaultOAuthRealm = authProviders[0].AuthRealm;
 
             AuthProviders = authProviders;
+            AuthWithRequestProviders = authProviders.OfType<IAuthWithRequest>().ToArray();
+            AuthResponseFilters = authProviders.OfType<IAuthResponseFilter>().ToArray();
+
             if (sessionFactory != null)
                 CurrentSessionFactory = sessionFactory;
         }
@@ -106,19 +120,29 @@ namespace ServiceStack.Auth
             if (provider == CredentialsAliasProvider)
                 provider = CredentialsProvider;
 
-            var oAuthConfig = GetAuthProvider(provider);
-            if (oAuthConfig == null)
+            var authProvider = GetAuthProvider(provider);
+            if (authProvider == null)
                 throw HttpError.NotFound(ErrorMessages.UnknownAuthProviderFmt.Fmt(provider));
 
             if (LogoutAction.EqualsIgnoreCase(request.provider))
-                return oAuthConfig.Logout(this, request);
+                return authProvider.Logout(this, request);
+
+            var authWithRequest = authProvider as IAuthWithRequest;
+            if (authWithRequest != null && !base.Request.IsInProcessRequest())
+            {
+                //IAuthWithRequest normally doesn't call Authenticate directly, but they can to return Auth Info
+                //But as AuthenticateService doesn't have [Authenticate] we need to call it manually
+                new AuthenticateAttribute().Execute(base.Request, base.Response, request);
+                if (base.Response.IsClosed)
+                    return null;
+            }
 
             var session = this.GetSession();
 
             var isHtml = base.Request.ResponseContentType.MatchesContentType(MimeTypes.Html);
             try
             {
-                var response = Authenticate(request, provider, session, oAuthConfig);
+                var response = Authenticate(request, provider, session, authProvider);
 
                 // The above Authenticate call may end an existing session and create a new one so we need
                 // to refresh the current session reference.
@@ -129,8 +153,8 @@ namespace ServiceStack.Auth
 
                 var referrerUrl = request.Continue
                     ?? session.ReferrerUrl
-                    ?? this.Request.GetHeader("Referer")
-                    ?? oAuthConfig.CallbackUrl;
+                    ?? this.Request.GetHeader(HttpHeaders.Referer)
+                    ?? authProvider.CallbackUrl;
 
                 var alreadyAuthenticated = response == null;
                 response = response ?? new AuthenticateResponse {
@@ -138,10 +162,24 @@ namespace ServiceStack.Auth
                     UserName = session.UserAuthName,
                     DisplayName = session.DisplayName 
                         ?? session.UserName 
-                        ?? "{0} {1}".Fmt(session.FirstName, session.LastName).Trim(),
+                        ?? $"{session.FirstName} {session.LastName}".Trim(),
                     SessionId = session.Id,
                     ReferrerUrl = referrerUrl,
                 };
+
+                var authResponse = response as AuthenticateResponse;
+                if (authResponse != null)
+                {
+                    foreach (var responseFilter in AuthResponseFilters)
+                    {
+                        authResponse = responseFilter.Execute(this, authProvider, session, authResponse) ?? authResponse;
+                    }
+
+                    if (AuthResponseDecorator != null)
+                    {
+                        return AuthResponseDecorator(this, request, authResponse);
+                    }
+                }
 
                 if (isHtml && request.provider != null)
                 {
@@ -160,7 +198,7 @@ namespace ServiceStack.Auth
             }
             catch (HttpError ex)
             {
-                var errorReferrerUrl = this.Request.GetHeader("Referer");
+                var errorReferrerUrl = this.Request.GetHeader(HttpHeaders.Referer);
                 if (isHtml && errorReferrerUrl != null)
                 {
                     errorReferrerUrl = errorReferrerUrl.SetParam("f", ex.Message.Localize(Request));
@@ -228,7 +266,7 @@ namespace ServiceStack.Auth
             var generateNewCookies = authFeature == null || authFeature.GenerateNewSessionCookiesOnAuthentication;
 
             object response = null;
-            if (!oAuthConfig.IsAuthorized(session, session.GetOAuthTokens(provider), request))
+            if (!oAuthConfig.IsAuthorized(session, session.GetAuthTokens(provider), request))
             {
                 if (generateNewCookies)
                     this.Request.GenerateNewSessionCookies(session);
@@ -238,18 +276,19 @@ namespace ServiceStack.Auth
             else
             {
                 if (generateNewCookies)
+                {
                     this.Request.GenerateNewSessionCookies(session);
+                    oAuthConfig.SaveSession(this, session, (oAuthConfig as AuthProvider)?.SessionExpiry);
+                }
             }
             return response;
         }
 
         public object Delete(Authenticate request)
         {
-            if (ValidateFn != null)
-            {
-                var response = ValidateFn(this, HttpMethods.Delete, request);
-                if (response != null) return response;
-            }
+            var response = ValidateFn?.Invoke(this, HttpMethods.Delete, request);
+            if (response != null)
+                return response;
 
             this.RemoveSession();
 

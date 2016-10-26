@@ -1,4 +1,6 @@
-﻿using System;
+﻿#if !NETSTANDARD1_6
+
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Security.Principal;
@@ -97,7 +99,7 @@ namespace ServiceStack.Auth
 
                 var loginUser = aspReq.ServerVariables["LOGON_USER"].ToNullIfEmpty();
                 var remoteUser = aspReq.ServerVariables["REMOTE_USER"].ToNullIfEmpty();
-                var identityName = aspReq.LogonUserIdentity != null ? aspReq.LogonUserIdentity.Name : null;
+                var identityName = aspReq.LogonUserIdentity?.Name;
                 session.DisplayName = loginUser
                     ?? remoteUser
                     ?? identityName;
@@ -126,7 +128,7 @@ namespace ServiceStack.Auth
                         session.Roles.AddIfNotExists(role);
                 }
 
-                authService.SaveSession(session, SessionExpiry);
+                this.SaveSession(authService, session, SessionExpiry);
                 
                 if (response != null)
                     return response;
@@ -146,71 +148,56 @@ namespace ServiceStack.Auth
         public static void AuthenticateIfWindowsAuth(IRequest req, IResponse res)
         {
             var winAuthProvider = AuthenticateService.GetAuthProvider(Name) as AspNetWindowsAuthProvider;
-            if (winAuthProvider != null)
-            {
-                winAuthProvider.IsAuthorized(req.GetUser());
-            }
+            winAuthProvider?.IsAuthorized(req.GetUser());
         }
 
         public void PreAuthenticate(IRequest req, IResponse res)
         {
-            SessionFeature.AddSessionIdToRequestFilter(req, res, null); //Required to get req.GetSessionId()
-
-            var authService = req.TryResolve<AuthenticateService>();
-            authService.Request = req;
             var user = req.GetUser();
-
             if (user != null)
             {
-                var session = req.GetSession();
-                if (LoginMatchesSession(session, user.Identity.Name)) return;
-
-                var response = authService.Post(new Authenticate
+                SessionFeature.AddSessionIdToRequestFilter(req, res, null); //Required to get req.GetSessionId()
+                using (var authService = HostContext.ResolveService<AuthenticateService>(req))
                 {
-                    provider = Name,
-                    UserName = user.GetUserName(),
-                });
+                    var session = req.GetSession();
+                    if (LoginMatchesSession(session, user.Identity.Name)) return;
+
+                    var response = authService.Post(new Authenticate
+                    {
+                        provider = Name,
+                        UserName = user.GetUserName(),
+                    });
+                }
             }
         }
     }
 
     public static class HttpContextExtensions
     {
-        public static IPrincipal GetUser(this HttpContext ctx)
-        {
-            if (ctx != null && ctx.User != null)
-            {
-                return ctx.User;
-            }
-            return null;
-        }
+        public static IPrincipal GetUser(this HttpContext ctx) => ctx?.User;
 
-        public static IPrincipal GetUser(this HttpContextBase ctx)
-        {
-            if (ctx != null && ctx.User != null)
-            {
-                return ctx.User;
-            }
-            return null;
-        }
+        public static IPrincipal GetUser(this HttpContextBase ctx) => ctx?.User;
 
         public static IPrincipal GetUser(this IRequest req)
         {
             var aspReq = req as AspNetRequest;
-            if (aspReq != null)
+            var aspReqBase = aspReq?.OriginalRequest as HttpRequestBase;
+            if (aspReqBase != null)
             {
-                var aspReqBase = aspReq.OriginalRequest as HttpRequestBase;
-                if (aspReqBase != null)
-                {
-                    return aspReqBase.RequestContext.HttpContext.GetUser();
-                }
+                var user = aspReqBase.RequestContext.HttpContext.GetUser();
+                return user.GetUserName() == null ? null : user;
             }
             return null;
         }
 
         public static string GetUserName(this IPrincipal user)
         {
-            return user != null ? user.Identity.Name : null;
+            var userName = user?.Identity.Name;
+            return string.IsNullOrEmpty(userName) //can be ""
+                ? null
+                : userName;
         }
     }
 }
+
+#endif

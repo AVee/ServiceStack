@@ -1,4 +1,6 @@
-﻿using System.Collections.Generic;
+﻿#if !NETCORE_SUPPORT
+using System;
+using System.Collections.Generic;
 using System.Configuration;
 using System.Linq;
 using NUnit.Framework;
@@ -95,10 +97,10 @@ namespace ServiceStack.Common.Tests
             using (var db = settings.DbFactory.Open())
             {
                 var value = db.Scalar<string>(
-                    "SELECT Value FROM ConfigSetting WHERE Id = @id", new { id = "RealKey"});
+                    "SELECT Value FROM ConfigSetting WHERE Id = @id", new { id = "RealKey" });
 
                 Assert.That(value, Is.EqualTo("This is a real value"));
-            }            
+            }
         }
 
         [Test]
@@ -180,7 +182,7 @@ ObjectKey {SomeSetting:Test,SomeOtherSetting:12,FinalSetting:Final}";
             Assert.That(appSettings.Get("EmptyKey"), Is.EqualTo(""));
             Assert.That(appSettings.Get("RealKey"), Is.EqualTo("This is a real value"));
 
-            Assert.That(appSettings.Get("IntKey", defaultValue:1), Is.EqualTo(42));
+            Assert.That(appSettings.Get("IntKey", defaultValue: 1), Is.EqualTo(42));
 
             var list = appSettings.GetList("ListKey");
             Assert.That(list, Has.Count.EqualTo(5));
@@ -198,6 +200,19 @@ ObjectKey {SomeSetting:Test,SomeOtherSetting:12,FinalSetting:Final}";
             Assert.That(value.SomeOtherSetting, Is.EqualTo(12));
             Assert.That(value.SomeSetting, Is.EqualTo("Test"));
         }
+
+        [Test]
+        public void Does_parse_byte_array_as_Base64()
+        {
+            var authKey = AesUtils.CreateKey();
+
+            var appSettings = new DictionarySettings(new Dictionary<string, string>
+            {
+                { "AuthKey", Convert.ToBase64String(authKey) }
+            });
+
+            Assert.That(appSettings.Get<byte[]>("AuthKey"), Is.EquivalentTo(authKey));
+        }
     }
 
     public abstract class AppSettingsTest
@@ -206,7 +221,7 @@ ObjectKey {SomeSetting:Test,SomeOtherSetting:12,FinalSetting:Final}";
         {
             return new DictionarySettings(GetConfigDictionary())
             {
-                ParsingStrategy = null,   
+                ParsingStrategy = null,
             };
         }
 
@@ -331,7 +346,7 @@ ObjectKey {SomeSetting:Test,SomeOtherSetting:12,FinalSetting:Final}";
                 Assert.That(ex.Message.Contains("BadDictionaryKey"));
             }
         }
-        
+
         [Test]
         public void Get_Returns_ObjectNoLineFeed()
         {
@@ -407,3 +422,4 @@ ObjectKey {SomeSetting:Test,SomeOtherSetting:12,FinalSetting:Final}";
         }
     }
 }
+#endif

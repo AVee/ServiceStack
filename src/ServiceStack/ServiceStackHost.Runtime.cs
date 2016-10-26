@@ -5,6 +5,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Data;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -12,12 +13,16 @@ using System.Runtime.Serialization;
 using System.Web;
 using System.Xml;
 using ServiceStack.Auth;
+using ServiceStack.Caching;
+using ServiceStack.Data;
 using ServiceStack.DataAnnotations;
 using ServiceStack.FluentValidation;
 using ServiceStack.Host;
 using ServiceStack.Host.Handlers;
+using ServiceStack.Messaging;
 using ServiceStack.Metadata;
 using ServiceStack.MiniProfiler;
+using ServiceStack.Redis;
 using ServiceStack.Serialization;
 using ServiceStack.Support.WebHost;
 using ServiceStack.Web;
@@ -56,6 +61,18 @@ namespace ServiceStack
         public virtual bool ApplyCustomHandlerRequestFilters(IRequest httpReq, IResponse httpRes)
         {
             return ApplyPreRequestFilters(httpReq, httpRes);
+        }
+
+        /// <summary>
+        /// Apply PreAuthenticate Filters from IAuthWithRequest AuthProviders
+        /// </summary>
+        public virtual void ApplyPreAuthenticateFilters(IRequest httpReq, IResponse httpRes)
+        {
+            httpReq.Items[Keywords.HasPreAuthenticated] = true;
+            foreach (var authProvider in AuthenticateService.AuthWithRequestProviders)
+            {
+                authProvider.PreAuthenticate(httpReq, httpRes);
+            }
         }
 
         /// <summary>
@@ -266,7 +283,7 @@ namespace ServiceStack
                 if (res.IsClosed) return;
             }
 
-            var dtoInterfaces = dtoType.GetInterfaces();
+            var dtoInterfaces = dtoType.GetTypeInterfaces();
             foreach (var dtoInterface in dtoInterfaces)
             {
                 typedFilters.TryGetValue(dtoInterface, out typedFilter);
@@ -278,17 +295,11 @@ namespace ServiceStack
             }
         }
 
-        public MetadataPagesConfig MetadataPagesConfig
-        {
-            get
-            {
-                return new MetadataPagesConfig(
-                    Metadata,
-                    Config.ServiceEndpointsMetadataConfig,
-                    Config.IgnoreFormatsInMetadata,
-                    ContentTypes.ContentTypeFormats.Keys.ToList());
-            }
-        }
+        public MetadataPagesConfig MetadataPagesConfig => new MetadataPagesConfig(
+            Metadata,
+            Config.ServiceEndpointsMetadataConfig,
+            Config.IgnoreFormatsInMetadata,
+            ContentTypes.ContentTypeFormats.Keys.ToList());
 
         public virtual TimeSpan GetDefaultSessionExpiry(IRequest req)
         {
@@ -317,7 +328,7 @@ namespace ServiceStack
             if (!HasFeature(usesFeatures))
             {
                 throw new UnauthorizedAccessException(
-                    String.Format("'{0}' Features have been disabled by your administrator", usesFeatures));
+                    $"'{usesFeatures}' Features have been disabled by your administrator");
             }
         }
 
@@ -417,7 +428,7 @@ namespace ServiceStack
 
         public virtual Exception ResolveResponseException(Exception ex)
         {
-            return Config.ReturnsInnerException && ex.InnerException != null && !(ex is IHttpError)
+            return Config?.ReturnsInnerException == true && ex.InnerException != null && !(ex is IHttpError)
                 ? ex.InnerException
                 : ex;
         }
@@ -446,22 +457,29 @@ namespace ServiceStack
             }
 
             var serializationEx = ex as SerializationException;
-            if (serializationEx != null)
+            var errors = serializationEx?.Data["errors"] as List<RequestBindingError>;
+            if (errors != null)
             {
-                var errors = serializationEx.Data["errors"] as List<RequestBindingError>;
-                if (errors != null)
-                {
-                    if (responseStatus.Errors == null)
-                        responseStatus.Errors = new List<ResponseError>();
+                if (responseStatus.Errors == null)
+                    responseStatus.Errors = new List<ResponseError>();
 
-                    responseStatus.Errors = errors.Select(e => new ResponseError
-                    {
-                        ErrorCode = ex.GetType().Name,
-                        FieldName = e.PropertyName,
-                        Message = e.PropertyValueString != null ? "'{0}' is an Invalid value for '{1}'".Fmt(e.PropertyValueString, e.PropertyName) : "Invalid Value for '{0}'".Fmt(e.PropertyName)
-                    }).ToList();
-                }
+                responseStatus.Errors = errors.Select(e => new ResponseError
+                {
+                    ErrorCode = ex.GetType().Name,
+                    FieldName = e.PropertyName,
+                    Message = e.PropertyValueString != null 
+                        ? $"'{e.PropertyValueString}' is an Invalid value for '{e.PropertyName}'"
+                        : $"Invalid Value for '{e.PropertyName}'"
+                }).ToList();
             }
+        }
+
+        public virtual void OnLogError(Type type, string message, Exception innerEx=null)
+        {
+            if (innerEx != null)
+                Log.Error(message, innerEx);
+            else
+                Log.Error(message);
         }
 
         public virtual void OnSaveSession(IRequest httpReq, IAuthSession session, TimeSpan? expiresIn = null)
@@ -472,9 +490,13 @@ namespace ServiceStack
             session.LastModified = DateTime.UtcNow;
             this.GetCacheClient().CacheSet(sessionKey, session, expiresIn ?? GetDefaultSessionExpiry(httpReq));
 
-            httpReq.Items[SessionFeature.RequestItemsSessionKey] = session;
+            httpReq.Items[Keywords.Session] = session;
         }
 
+        /// <summary>
+        /// Inspect or modify ever new UserSession created or resolved from cache. 
+        /// return null if Session is invalid to create new Session.
+        /// </summary>
         public virtual IAuthSession OnSessionFilter(IAuthSession session, string withSessionId)
         {
             if (session == null || !SessionFeature.VerifyCachedSessionId)
@@ -485,10 +507,20 @@ namespace ServiceStack
 
             if (Log.IsDebugEnabled)
             {
-                Log.Debug("ignoring cached sessionId '{0}' which is different to request '{1}'"
-                    .Fmt(session.Id, withSessionId));
+                Log.Debug($"ignoring cached sessionId '{session.Id}' which is different to request '{withSessionId}'");
             }
             return null;
+        }
+
+        public virtual bool AllowSetCookie(IRequest req, string cookieName)
+        {
+            if (!Config.AllowSessionCookies)
+                return cookieName != SessionFeature.SessionId
+                    && cookieName != SessionFeature.PermanentSessionId
+                    && cookieName != SessionFeature.SessionOptionsKey
+                    && cookieName != SessionFeature.XUserAuthId;
+
+            return true;
         }
 
         public virtual IRequest TryGetCurrentRequest()
@@ -517,7 +549,7 @@ namespace ServiceStack
         {
             var types = operationTypes
                 .Where(x => !x.AllAttributes<ExcludeAttribute>()
-                            .Any(attr => attr.Feature.HasFlag(Feature.Soap)))
+                            .Any(attr => attr.Feature.Has(Feature.Soap)))
                 .Where(x => !x.IsGenericTypeDefinition())
                 .ToList();
             return types;
@@ -527,41 +559,100 @@ namespace ServiceStack
         {
             return !type.IsGenericTypeDefinition() &&
                    !type.AllAttributes<ExcludeAttribute>()
-                        .Any(attr => attr.Feature.HasFlag(Feature.Soap));
+                        .Any(attr => attr.Feature.Has(Feature.Soap));
         }
 
-        public virtual void WriteSoapMessage(IRequest req, System.ServiceModel.Channels.Message message, Stream outputStream)
+        /// <summary>
+        /// Gets IDbConnection Checks if DbInfo is seat in RequestContext.
+        /// See multitenancy: https://github.com/ServiceStack/ServiceStack/wiki/Multitenancy
+        /// Called by itself, <see cref="Service"></see> and <see cref="ServiceStack.Razor.ViewPageBase"></see>
+        /// </summary>
+        /// <param name="req">Provided by services and pageView, can be helpfull when overriding this method</param>
+        /// <returns></returns>
+        public virtual IDbConnection GetDbConnection(IRequest req = null)
         {
-            try
-            {
-                using (var writer = XmlWriter.Create(outputStream, Config.XmlWriterSettings))
-                {
-                    message.WriteMessage(writer);
-                }
-            }
-            catch (Exception ex)
-            {
-                var response = OnServiceException(req, req.Dto, ex);
-                if (response == null || !outputStream.CanSeek)
-                    return;
+            var dbFactory = Container.TryResolve<IDbConnectionFactory>();
 
-                outputStream.Position = 0;
-                try
-                {
-                    message = SoapHandler.CreateResponseMessage(response, message.Version, req.Dto.GetType(),
-                        req.GetSoapMessage().Headers.Action == null);
-                    using (var writer = XmlWriter.Create(outputStream, Config.XmlWriterSettings))
-                    {
-                        message.WriteMessage(writer);
-                    }
-                }
-                catch { }
-            }
-            finally
+            ConnectionInfo connInfo;
+            if (req != null && (connInfo = req.GetItem(Keywords.DbInfo) as ConnectionInfo) != null)
             {
-                HostContext.CompleteRequest(req);
+                var dbFactoryExtended = dbFactory as IDbConnectionFactoryExtended;
+                if (dbFactoryExtended == null)
+                    throw new NotSupportedException("ConnectionInfo can only be used with IDbConnectionFactoryExtended");
+
+                if (connInfo.ConnectionString != null && connInfo.ProviderName != null)
+                    return dbFactoryExtended.OpenDbConnectionString(connInfo.ConnectionString, connInfo.ProviderName);
+
+                if (connInfo.ConnectionString != null)
+                    return dbFactoryExtended.OpenDbConnectionString(connInfo.ConnectionString);
+
+                if (connInfo.NamedConnection != null)
+                    return dbFactoryExtended.OpenDbConnection(connInfo.NamedConnection);
             }
+
+            return dbFactory.OpenDbConnection();
         }
+
+        /// <summary>
+        /// Resolves <see cref="IRedisClient"></see> based on <see cref="IRedisClientsManager"></see>.GetClient();
+        /// Called by itself, <see cref="Service"></see> and <see cref="ServiceStack.Razor.ViewPageBase"></see>
+        /// </summary>
+        /// <param name="req">Provided by services and pageView, can be helpfull when overriding this method</param>
+        /// <returns></returns>
+        public virtual IRedisClient GetRedisClient(IRequest req = null)
+        {
+            return Container.TryResolve<IRedisClientsManager>().GetClient();
+        }
+
+        /// <summary>
+        /// Tries to resolve <see cref="IRedisClient"></see> through Ioc container.
+        /// If not registered, it falls back to <see cref="IRedisClientsManager"></see>.GetClient();
+        /// Called by itself, <see cref="Service"></see> and <see cref="ServiceStack.Razor.ViewPageBase"></see>
+        /// </summary>
+        /// <param name="req">Provided by services and pageView, can be helpfull when overriding this method</param>
+        /// <returns></returns>
+        public virtual ICacheClient GetCacheClient(IRequest req)
+        {
+            return this.GetCacheClient();
+        }
+
+        /// <summary>
+        /// Returns <see cref="MemoryCacheClient"></see>. cache is only persisted for this running app instance.
+        /// Called by <see cref="Service"></see>.MemoryCacheClient
+        /// </summary>
+        /// <param name="req">Provided by services and pageView, can be helpfull when overriding this method</param>
+        /// <returns>Nullable MemoryCacheClient</returns>
+        public virtual MemoryCacheClient GetMemoryCacheClient(IRequest req)
+        {
+            return Container.TryResolve<MemoryCacheClient>();
+        }
+
+        /// <summary>
+        /// Returns <see cref="IMessageProducer"></see> from the IOC container.
+        /// Called by itself, <see cref="Service"></see> and <see cref="ServiceStack.Razor.ViewPageBase"></see>
+        /// </summary>
+        /// <param name="req">Provided by services and PageViewBase, can be helpfull when overriding this method</param>
+        /// <returns></returns>
+        public virtual IMessageProducer GetMessageProducer(IRequest req = null)
+        {
+            return (Container.TryResolve<IMessageFactory>()
+                ?? Container.TryResolve<IMessageService>().MessageFactory).CreateMessageProducer();
+        }
+
+        public virtual IServiceGateway GetServiceGateway(IRequest req)
+        {
+            var factory = Container.TryResolve<IServiceGatewayFactory>();
+            return factory != null ? factory.GetServiceGateway(req) 
+                : Container.TryResolve<IServiceGateway>()
+                ?? new InProcessServiceGateway(req);
+        }
+
+        public virtual IAuthRepository GetAuthRepository(IRequest req = null)
+        {
+            return TryResolve<IAuthRepository>();
+        }
+
+        public virtual ICookies GetCookies(IHttpResponse res) => new Cookies(res);
     }
 
 }

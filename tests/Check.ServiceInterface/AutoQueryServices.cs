@@ -6,13 +6,35 @@ using ServiceStack.DataAnnotations;
 
 namespace Check.ServiceInterface
 {
-    [Route("/query/rockstars")]
-    public class QueryRockstars : QueryBase<Rockstar>
+    [Route("/querydata/rockstars")]
+    public class QueryDataRockstars : QueryData<Rockstar>
     {
         public int? Age { get; set; }
     }
 
-    public class QueryRockstarsConventions : QueryBase<Rockstar>
+    [Route("/query/rockstars")]
+    public class QueryRockstars : QueryDb<Rockstar>
+    {
+        public int? Age { get; set; }
+    }
+
+    [ConnectionInfo(NamedConnection = "pgsql")]
+    [Route("/pgsql/rockstars")]
+    public class QueryPostgresRockstars : QueryDb<Rockstar>
+    {
+        public int? Age { get; set; }
+    }
+
+    [NamedConnection("pgsql")]
+    public class PgRockstar : Rockstar {}
+
+    [Route("/pgsql/pgrockstars")]
+    public class QueryPostgresPgRockstars : QueryDb<PgRockstar>
+    {
+        public int? Age { get; set; }
+    }
+
+    public class QueryRockstarsConventions : QueryDb<Rockstar>
     {
         public int[] Ids { get; set; }
         public int? AgeOlderThan { get; set; }
@@ -28,95 +50,95 @@ namespace Check.ServiceInterface
     }
 
     [AutoQueryViewer(Title = "Search for Rockstars", Description = "Use this option to search for Rockstars!")]
-    public class QueryCustomRockstars : QueryBase<Rockstar, CustomRockstar>
+    public class QueryCustomRockstars : QueryDb<Rockstar, CustomRockstar>
     {
         public int? Age { get; set; }
     }
 
     [Route("/customrockstars")]
-    public class QueryRockstarAlbums : QueryBase<Rockstar, CustomRockstar>, IJoin<Rockstar, RockstarAlbum>
+    public class QueryRockstarAlbums : QueryDb<Rockstar, CustomRockstar>, IJoin<Rockstar, RockstarAlbum>
     {
         public int? Age { get; set; }
         public string RockstarAlbumName { get; set; }
     }
 
-    public class QueryRockstarAlbumsImplicit : QueryBase<Rockstar, CustomRockstar>, IJoin<Rockstar, RockstarAlbum>
+    public class QueryRockstarAlbumsImplicit : QueryDb<Rockstar, CustomRockstar>, IJoin<Rockstar, RockstarAlbum>
     {
     }
 
-    public class QueryRockstarAlbumsLeftJoin : QueryBase<Rockstar, CustomRockstar>, ILeftJoin<Rockstar, RockstarAlbum>
+    public class QueryRockstarAlbumsLeftJoin : QueryDb<Rockstar, CustomRockstar>, ILeftJoin<Rockstar, RockstarAlbum>
     {
         public int? Age { get; set; }
         public string AlbumName { get; set; }
     }
 
 
-    public class QueryOverridedRockstars : QueryBase<Rockstar>
+    public class QueryOverridedRockstars : QueryDb<Rockstar>
     {
         public int? Age { get; set; }
     }
 
-    public class QueryOverridedCustomRockstars : QueryBase<Rockstar, CustomRockstar>
+    public class QueryOverridedCustomRockstars : QueryDb<Rockstar, CustomRockstar>
     {
         public int? Age { get; set; }
     }
 
-    public class QueryFieldRockstars : QueryBase<Rockstar>
+    public class QueryFieldRockstars : QueryDb<Rockstar>
     {
         public string FirstName { get; set; } //default to 'AND FirstName = {Value}'
 
         public string[] FirstNames { get; set; } //Collections default to 'FirstName IN ({Values})
 
-        [QueryField(Operand = ">=")]
+        [QueryDbField(Operand = ">=")]
         public int? Age { get; set; }
 
-        [QueryField(Template = "UPPER({Field}) LIKE UPPER({Value})", Field = "FirstName")]
+        [QueryDbField(Template = "UPPER({Field}) LIKE UPPER({Value})", Field = "FirstName")]
         public string FirstNameCaseInsensitive { get; set; }
 
-        [QueryField(Template = "{Field} LIKE {Value}", Field = "FirstName", ValueFormat = "{0}%")]
+        [QueryDbField(Template = "{Field} LIKE {Value}", Field = "FirstName", ValueFormat = "{0}%")]
         public string FirstNameStartsWith { get; set; }
 
-        [QueryField(Template = "{Field} LIKE {Value}", Field = "LastName", ValueFormat = "%{0}")]
+        [QueryDbField(Template = "{Field} LIKE {Value}", Field = "LastName", ValueFormat = "%{0}")]
         public string LastNameEndsWith { get; set; }
 
-        [QueryField(Template = "{Field} BETWEEN {Value1} AND {Value2}", Field = "FirstName")]
+        [QueryDbField(Template = "{Field} BETWEEN {Value1} AND {Value2}", Field = "FirstName")]
         public string[] FirstNameBetween { get; set; }
 
-        [QueryField(Term = QueryTerm.Or, Template = "UPPER({Field}) LIKE UPPER({Value})", Field = "LastName")]
+        [QueryDbField(Term = QueryTerm.Or, Template = "UPPER({Field}) LIKE UPPER({Value})", Field = "LastName")]
         public string OrLastName { get; set; }
     }
 
-    public class QueryFieldRockstarsDynamic : QueryBase<Rockstar>
+    public class QueryFieldRockstarsDynamic : QueryDb<Rockstar>
     {
         public int? Age { get; set; }
     }
 
-    public class QueryRockstarsFilter : QueryBase<Rockstar>
+    public class QueryRockstarsFilter : QueryDb<Rockstar>
     {
         public int? Age { get; set; }
     }
 
-    public class QueryCustomRockstarsFilter : QueryBase<Rockstar, CustomRockstar>
+    public class QueryCustomRockstarsFilter : QueryDb<Rockstar, CustomRockstar>
     {
         public int? Age { get; set; }
     }
 
     public interface IFilterRockstars { }
-    public class QueryRockstarsIFilter : QueryBase<Rockstar>, IFilterRockstars
+    public class QueryRockstarsIFilter : QueryDb<Rockstar>, IFilterRockstars
     {
         public int? Age { get; set; }
     }
 
-    [Query(QueryTerm.Or)]
+    [QueryDb(QueryTerm.Or)]
     [Route("/OrRockstars")]
-    public class QueryOrRockstars : QueryBase<Rockstar>
+    public class QueryOrRockstars : QueryDb<Rockstar>
     {
         public int? Age { get; set; }
         public string FirstName { get; set; }
     }
 
-    [Query(QueryTerm.Or)]
-    public class QueryGetRockstars : QueryBase<Rockstar>
+    [QueryDb(QueryTerm.Or)]
+    public class QueryGetRockstars : QueryDb<Rockstar>
     {
         public int[] Ids { get; set; }
         public List<int> Ages { get; set; }
@@ -124,8 +146,8 @@ namespace Check.ServiceInterface
         public int[] IdsBetween { get; set; }
     }
 
-    [Query(QueryTerm.Or)]
-    public class QueryGetRockstarsDynamic : QueryBase<Rockstar> { }
+    [QueryDb(QueryTerm.Or)]
+    public class QueryGetRockstarsDynamic : QueryDb<Rockstar> { }
 
     public class RockstarAlbum
     {
@@ -152,12 +174,12 @@ namespace Check.ServiceInterface
     }
 
     [Route("/movies/search")]
-    [Query(QueryTerm.And)] //Default
-    public class SearchMovies : QueryBase<Movie> { }
+    [QueryDb(QueryTerm.And)] //Default
+    public class SearchMovies : QueryDb<Movie> { }
 
     [Route("/movies")]
-    [Query(QueryTerm.Or)]
-    public class QueryMovies : QueryBase<Movie>
+    [QueryDb(QueryTerm.Or)]
+    public class QueryMovies : QueryDb<Movie>
     {
         public int[] Ids { get; set; }
         public string[] ImdbIds { get; set; }
@@ -178,19 +200,19 @@ namespace Check.ServiceInterface
         public List<string> Genres { get; set; }
     }
 
-    public class StreamMovies : QueryBase<Movie>
+    public class StreamMovies : QueryDb<Movie>
     {
         public string[] Ratings { get; set; }
     }
 
-    public class QueryUnknownRockstars : QueryBase<Rockstar>
+    public class QueryUnknownRockstars : QueryDb<Rockstar>
     {
         public int UnknownInt { get; set; }
         public string UnknownProperty { get; set; }
 
     }
     [Route("/query/rockstar-references")]
-    public class QueryRockstarsWithReferences : QueryBase<RockstarReference>
+    public class QueryRockstarsWithReferences : QueryDb<RockstarReference>
     {
         public int? Age { get; set; }
     }
@@ -209,12 +231,12 @@ namespace Check.ServiceInterface
 
     public class AutoQueryService : Service
     {
-        public IAutoQuery AutoQuery { get; set; }
+        public IAutoQueryDb AutoQuery { get; set; }
 
         //Override with custom impl
         public QueryResponse<Rockstar> Any(QueryRockstars dto)
         {
-            var q = AutoQuery.CreateQuery(dto, Request.GetRequestParams());
+            var q = AutoQuery.CreateQuery(dto, Request.GetRequestParams(), Request);
             q.Take(1);
             return AutoQuery.Execute(dto, q);
         }

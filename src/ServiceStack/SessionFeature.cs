@@ -12,6 +12,8 @@ namespace ServiceStack
         public const string PermanentSessionId = "ss-pid";
         public const string SessionOptionsKey = "ss-opt";
         public const string XUserAuthId = HttpHeaders.XUserAuthId;
+
+        [Obsolete("Use Keywords.Session")]
         public const string RequestItemsSessionKey = "__session";
 
         public static TimeSpan DefaultSessionExpiry = TimeSpan.FromDays(7 * 2); //2 weeks
@@ -20,6 +22,7 @@ namespace ServiceStack
         public TimeSpan? SessionExpiry { get; set; }
         public TimeSpan? PermanentSessionExpiry { get; set; }
 
+        [Obsolete("Removing rarely used feature, if needed override OnSessionFilter() and return null if invalid session")]
         public static bool VerifyCachedSessionId = false;
 
         private static bool alreadyConfigured;
@@ -73,6 +76,10 @@ namespace ServiceStack
             if (httpReq == null)
                 httpReq = HostContext.GetCurrentRequest();
 
+            var iSession = httpReq.GetSession(reload:false);
+            if (iSession is T)
+                return (T)iSession;
+
             var sessionId = httpReq.GetSessionId();
             var sessionKey = GetSessionKey(sessionId);
             if (sessionKey != null)
@@ -93,8 +100,7 @@ namespace ServiceStack
             session.OnCreated(httpReq);
 
             var authEvents = HostContext.TryResolve<IAuthEvents>();
-            if (authEvents != null)
-                authEvents.OnCreated(httpReq, session);
+            authEvents?.OnCreated(httpReq, session);
 
             return session;
         }

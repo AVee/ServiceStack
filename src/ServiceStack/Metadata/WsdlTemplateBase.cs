@@ -1,5 +1,5 @@
 using System.Collections.Generic;
-using System.Text;
+using ServiceStack.Text;
 
 namespace ServiceStack.Metadata
 {
@@ -14,60 +14,32 @@ namespace ServiceStack.Metadata
 
         public abstract string WsdlName { get; }
 
-        protected virtual string ReplyMessagesTemplate
-        {
-            get
-            {
-                return
-    @"<wsdl:message name=""{0}In"">
+        protected virtual string ReplyMessagesTemplate => 
+  @"<wsdl:message name=""{0}In"">
         <wsdl:part name=""par"" element=""tns:{0}"" />
     </wsdl:message>
     <wsdl:message name=""{0}Out"">
         <wsdl:part name=""par"" element=""tns:{0}Response"" />
     </wsdl:message>";
-            }
-        }
 
-        protected virtual string OneWayMessagesTemplate
-        {
-            get
-            {
-                return
-    @"<wsdl:message name=""{0}In"">
+        protected virtual string OneWayMessagesTemplate => 
+  @"<wsdl:message name=""{0}In"">
         <wsdl:part name=""par"" element=""tns:{0}"" />
     </wsdl:message>";
-            }
-        }
 
-        protected virtual string ReplyOperationsTemplate
-        {
-            get
-            {
-                return
-    @"<wsdl:operation name=""{0}"">
+        protected virtual string ReplyOperationsTemplate => 
+  @"<wsdl:operation name=""{0}"">
         <wsdl:input message=""svc:{0}In"" />
         <wsdl:output message=""svc:{0}Out"" />
     </wsdl:operation>";
-            }
-        }
 
-        protected virtual string OneWayOperationsTemplate
-        {
-            get
-            {
-                return
-    @"<wsdl:operation name=""{0}"">
+        protected virtual string OneWayOperationsTemplate => 
+   @"<wsdl:operation name=""{0}"">
         <wsdl:input message=""svc:{0}In"" />
     </wsdl:operation>";
-            }
-        }
 
-        protected virtual string ReplyActionsTemplate
-        {
-            get
-            {
-                return
-    @"<wsdl:operation name=""{1}"">
+        protected virtual string ReplyActionsTemplate => 
+  @"<wsdl:operation name=""{1}"">
       <soap:operation soapAction=""{0}{1}"" style=""document"" />
       <wsdl:input>
         <soap:body use=""literal"" />
@@ -76,22 +48,14 @@ namespace ServiceStack.Metadata
         <soap:body use=""literal"" />
       </wsdl:output>
     </wsdl:operation>";
-            }
-        }
 
-        protected virtual string OneWayActionsTemplate
-        {
-            get
-            {
-                return
-    @"<wsdl:operation name=""{1}"">
+        protected virtual string OneWayActionsTemplate => 
+  @"<wsdl:operation name=""{1}"">
       <soap:operation soapAction=""{0}{1}"" style=""document"" />
       <wsdl:input>
         <soap:body use=""literal"" />
       </wsdl:input>
     </wsdl:operation>";
-            }
-        }
 
         protected abstract string ReplyBindingContainerTemplate { get; }
         protected abstract string OneWayBindingContainerTemplate { get; }
@@ -144,22 +108,22 @@ namespace ServiceStack.Metadata
 
         public string RepeaterTemplate(string template, IEnumerable<string> dataSource)
         {
-            var sb = new StringBuilder();
+            var sb = StringBuilderCache.Allocate();
             foreach (var item in dataSource)
             {
                 sb.AppendFormat(template, item);
             }
-            return sb.ToString();
+            return StringBuilderCache.ReturnAndFree(sb);
         }
 
         public string RepeaterTemplate(string template, object arg0, IEnumerable<string> dataSource)
         {
-            var sb = new StringBuilder();
+            var sb = StringBuilderCache.Allocate();
             foreach (var item in dataSource)
             {
                 sb.AppendFormat(template, arg0, item);
             }
-            return sb.ToString();
+            return StringBuilderCache.ReturnAndFree(sb);
         }
 
         public override string ToString()
@@ -176,10 +140,10 @@ namespace ServiceStack.Metadata
             var replyBindings = string.Format(this.ReplyBindingContainerTemplate, replyActions, replyServiceName);
             var replyEndpointUri = string.Format(this.ReplyEndpointUriTemplate, ServiceName, this.ReplyEndpointUri, replyServiceName);
 
-            string oneWayMessages = "";
-            string oneWayOperations = "";
-            string oneWayBindings = "";
-            string oneWayEndpointUri = "";
+            var oneWayMessages = "";
+            var oneWayOperations = "";
+            var oneWayBindings = "";
+            var oneWayEndpointUri = "";
             if (OneWayOperationNames.Count > 0)
             {
                 oneWayMessages = RepeaterTemplate(this.OneWayMessagesTemplate, this.OneWayOperationNames);

@@ -1,4 +1,6 @@
-﻿using System;
+﻿#if !NETSTANDARD1_6
+
+using System;
 using System.Collections.Generic;
 using System.Data.Common;
 using System.Text.RegularExpressions;
@@ -187,7 +189,7 @@ namespace ServiceStack.MiniProfiler
         }
 
         /// <summary>
-        /// Called when database reader is closed, ending profiling for <see cref="ServiceStack.MiniProfiler.Data.ExecuteType.Reader"/> SqlTimings.
+        /// Called when database reader is closed, ending profiling for <see cref="Data.ExecuteType.Reader"/> SqlTimings.
         /// </summary>
         public void ReaderFetchComplete()
         {
@@ -246,3 +248,5 @@ namespace ServiceStack.MiniProfiler
         }
     }
 }
+
+#endif

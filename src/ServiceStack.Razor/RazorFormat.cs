@@ -86,12 +86,12 @@ namespace ServiceStack.Razor
             }
         }
 
-        static bool DenyPathsWithLeading_(string path)
+        public static bool DenyPathsWithLeading_(string path)
         {
             return Path.GetFileName(path).StartsWith("_");
         }
 
-        static bool DenyDirectAccessToViews(string path)
+        public static bool DenyDirectAccessToViews(string path)
         {
             return path.StartsWithIgnoreCase("/views");
         }
@@ -123,7 +123,7 @@ namespace ServiceStack.Razor
                 var loadedAssemblyNames = CompilerServices
                     .GetLoadedAssemblies()
                     .Where(x => !x.IsDynamic)
-                    .Map(x => x.FullName.SplitOnFirst(',')[0]);
+                    .Map(x => x.FullName.LeftPart(','));
 
                 foreach (var razorNamespace in appHost.Config.RazorNamespaces)
                 {

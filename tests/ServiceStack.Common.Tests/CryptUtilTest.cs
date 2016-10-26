@@ -1,4 +1,5 @@
-﻿using System;
+﻿#if !NETCORE_SUPPORT
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -28,18 +29,21 @@ namespace ServiceStack.Common.Tests
 
         }
 
-        [TestCase]
-        [Test, ExpectedException(typeof(ArgumentNullException))]
-        public void CanEncryptWithStringExtensionFailsWithoutKeyPair()
+        [Test]
+        public void Can_sign_data_with_RSA()
         {
-            RsaUtils.KeyLength = RsaKeyLengths.Bit1024;
-            RsaUtils.DefaultKeyPair = null;
-            string TestStart = "Mr. Watson--come here--I want to see you.";
-            string Encrypted;
+            var privateKey = RsaUtils.CreatePrivateKeyParams(RsaKeyLengths.Bit2048);
+            var publicKey = privateKey.ToPublicRsaParameters();
 
-            Encrypted = TestStart.Encrypt();
-                      
+            var message = "sign this";
+            var data = message.ToUtf8Bytes();
 
+            var signature = RsaUtils.Authenticate(data, privateKey, "SHA256", RsaKeyLengths.Bit2048);
+
+            var verified = RsaUtils.Verify(data, signature, publicKey, "SHA256", RsaKeyLengths.Bit2048);
+
+            Assert.That(verified, Is.True);
         }
     }
 }
+#endif

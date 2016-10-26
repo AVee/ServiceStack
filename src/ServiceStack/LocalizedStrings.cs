@@ -15,6 +15,17 @@
         public static string SoapMessage = "SoapMessage";
         public static string Route = "__route";
         public static string InvokeVerb = "__verb";
+        public static string DbInfo = "__dbinfo";
+        public static string CacheInfo = "__cacheinfo";
+        public static string ApiKey = "__apikey";
+        public static string Session = "__session";
+        public static string JsConfig = "jsconfig";
+        public static string SessionId = "ss-id";
+        public static string PermanentSessionId = "ss-pid";
+        public static string SessionOptionsKey = "ss-opt";
+        public static string TokenCookie = "ss-tok";
+        public static string HasPreAuthenticated = "__haspreauth";
+        public static string IRequest = "__irequest";
     }
 
     public static class LocalizedStrings
@@ -25,6 +36,7 @@
         public const string Redirect = "redirect";
         public const string AssignRoles = "assignroles";
         public const string UnassignRoles = "unassignroles";
+        public const string NotModified = "Not Modified";
     }
 
     public static class ErrorMessages
@@ -37,8 +49,14 @@
         public static string NotAuthenticated = "Not Authenticated";
         public static string InvalidUsernameOrPassword = "Invalid UserName or Password";
         public static string UsernameOrEmailRequired = "UserName or Email is required";
+        public static string UserAccountLocked = "This account has been locked";
         public static string IllegalUsername = "UserName contains invalid characters";
         public static string ShouldNotRegisterAuthSession = "AuthSession's are rehydrated from ICacheClient and should not be registered in IOC's when not in HostContext.TestMode";
+        public static string ApiKeyRequiresSecureConnection = "Sending ApiKey over insecure connection forbidden when RequireSecureConnection=true";
+        public static string JwtRequiresSecureConnection = "Sending JWT over insecure connection forbidden when RequireSecureConnection=true";
+        public static string InvalidSignature = "Invalid Signature";
+        public static string TokenInvalidated = "Token has been invalidated";
+        public static string TokenExpired = "Token has expired";
 
         public static string InvalidRole = "Invalid Role";
         public static string InvalidPermission = "Invalid Permission";
@@ -46,6 +64,13 @@
         //Register
         public static string UserNotExists = "User does not exist";
         public static string AuthRepositoryNotExists = "No IAuthRepository registered or failed to resolve. Check your IoC registrations.";
+        public static string UsernameAlreadyExists = "Username already exists";
+        public static string EmailAlreadyExists = "Email already exists";
+
+        //AuthRepo
+        public static string UserAlreadyExistsTemplate1 = "User '{0}' already exists";
+        public static string EmailAlreadyExistsTemplate1 = "Email '{0}' already exists";
+
 
         //StaticFileHandler
         public static string FileNotExistsFmt = "Static File '{0}' not found";
@@ -64,6 +89,7 @@
         //Invalid State
         public static string ConstructorNotFoundForType = "Constructor not found for Type '{0}'";
         public static string ServiceNotFoundForType = "Service not found for Type '{0}'";
+        public static string CacheFeatureMustBeEnabled = "HttpCacheFeature Plugin must be registered to use {0}";
     }
 
     public static class HelpMessages

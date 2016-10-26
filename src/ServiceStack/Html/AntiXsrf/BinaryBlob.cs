@@ -1,4 +1,6 @@
-﻿// Copyright (c) Microsoft Open Technologies, Inc. All rights reserved. See License.txt in the project root for license information.
+﻿#if !NETSTANDARD1_6
+
+// Copyright (c) Microsoft Open Technologies, Inc. All rights reserved. See License.txt in the project root for license information.
 
 using System;
 using System.Collections.Generic;
@@ -54,7 +56,7 @@ namespace ServiceStack.Html.AntiXsrf
         {
             get
             {
-                StringBuilder sb = new StringBuilder("0x", 2 + (_data.Length * 2));
+                var sb = new StringBuilder("0x", 2 + _data.Length * 2);
                 for (int i = 0; i < _data.Length; i++) {
                     sb.AppendFormat(CultureInfo.InvariantCulture, "{0:x2}", _data[i]);
                 }
@@ -166,3 +168,5 @@ namespace ServiceStack.Html.AntiXsrf
     }
 
 }
+
+#endif

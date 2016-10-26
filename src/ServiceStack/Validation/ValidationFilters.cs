@@ -13,13 +13,11 @@ namespace ServiceStack.Validation
 
             try
             {
-                var validatorWithHttpRequest = validator as IRequiresRequest;
-                if (validatorWithHttpRequest != null)
-                    validatorWithHttpRequest.Request = req;
-
                 var ruleSet = req.Verb;
                 var validationResult = validator.Validate(
-                    new ValidationContext(requestDto, null, new MultiRuleSetValidatorSelector(ruleSet)));
+                    new ValidationContext(requestDto, null, new MultiRuleSetValidatorSelector(ruleSet)) {
+                        Request = req
+                    });
 
                 if (validationResult.IsValid) return;
 
@@ -27,7 +25,7 @@ namespace ServiceStack.Validation
                     ?? DtoUtils.CreateErrorResponse(requestDto, validationResult.ToErrorResult());
 
                 var validationFeature = HostContext.GetPlugin<ValidationFeature>();
-                if (validationFeature != null && validationFeature.ErrorResponseFilter != null)
+                if (validationFeature?.ErrorResponseFilter != null)
                 {
                     errorResponse = validationFeature.ErrorResponseFilter(validationResult, errorResponse);
                 }

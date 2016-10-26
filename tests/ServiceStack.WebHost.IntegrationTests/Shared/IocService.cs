@@ -10,9 +10,9 @@ namespace ServiceStack.Shared.Tests
 {
     public static class IocShared
     {
-		public static void Configure(ServiceStackHost appHost)
-		{
-		    var container = appHost.Container;
+        public static void Configure(ServiceStackHost appHost)
+        {
+            var container = appHost.Container;
 
             container.Adapter = new IocAdapter();
             container.Register(c => new FunqDepCtor());
@@ -22,6 +22,7 @@ namespace ServiceStack.Shared.Tests
             container.Register(c => new FunqSingletonScope()).ReusedWithin(ReuseScope.Default);
             container.Register(c => new FunqRequestScope()).ReusedWithin(ReuseScope.Request);
             container.Register(c => new FunqNoneScope()).ReusedWithin(ReuseScope.None);
+            container.Register(c => new FunqInjectRequest()).ReusedWithin(ReuseScope.None);
             container.Register(c => new FunqRequestScopeDepDisposableProperty()).ReusedWithin(ReuseScope.Request);
 
             container.Register(c => new FunqSingletonScopeDisposable()).ReusedWithin(ReuseScope.Default);
@@ -80,6 +81,23 @@ namespace ServiceStack.Shared.Tests
     {
         public static int Count = 0;
         public FunqNoneScope() { Count++; }
+    }
+
+    public class FunqInjectRequest : IRequiresRequest
+    {
+        public FunqInjectRequest()
+        {
+            this.SecondLevel = new FunqInjectRequest2();
+        }
+
+        public IRequest Request { get; set; }
+
+        public FunqInjectRequest2 SecondLevel { get; set; }
+    }
+
+    public class FunqInjectRequest2 : IRequiresRequest
+    {
+        public IRequest Request { get; set; }
     }
 
     public class FunqRequestScopeDisposable : IDisposable
@@ -190,9 +208,9 @@ namespace ServiceStack.Shared.Tests
             var response = new IocResponse();
 
             var deps = new object[] {
-				FunqDepProperty, FunqDepDisposableProperty, 
-				AltDepProperty, AltDepDisposableProperty
-			};
+                FunqDepProperty, FunqDepDisposableProperty,
+                AltDepProperty, AltDepDisposableProperty
+            };
 
             foreach (var dep in deps)
             {
@@ -283,10 +301,10 @@ namespace ServiceStack.Shared.Tests
             var response = new IocResponse();
 
             var deps = new object[] {
-				funqDepCtor, altDepCtor, 
-				FunqDepProperty, FunqDepDisposableProperty, 
-				AltDepProperty, AltDepDisposableProperty
-			};
+                funqDepCtor, altDepCtor,
+                FunqDepProperty, FunqDepDisposableProperty,
+                AltDepProperty, AltDepDisposableProperty
+            };
 
             foreach (var dep in deps)
             {
@@ -317,7 +335,7 @@ namespace ServiceStack.Shared.Tests
             await Task.Delay(10);
             return Request.Items["action-attr"] as IocResponse;
         }
-        
+
         public static int DisposeCount = 0;
         public static bool ThrowErrors = false;
 
@@ -349,6 +367,8 @@ namespace ServiceStack.Shared.Tests
 
         public Dictionary<string, int> Results { get; set; }
 
+        public int InjectsRequest { get; set; }
+
         public ResponseStatus ResponseStatus { get; set; }
     }
 
@@ -378,6 +398,7 @@ namespace ServiceStack.Shared.Tests
         public FunqRequestScope FunqRequestScope { get; set; }
         public FunqSingletonScope FunqSingletonScope { get; set; }
         public FunqNoneScope FunqNoneScope { get; set; }
+        public FunqInjectRequest FunqInjectRequest { get; set; }
         public FunqRequestScopeDepDisposableProperty FunqRequestScopeDepDisposableProperty { get; set; }
         public AltRequestScopeDepDisposableProperty AltRequestScopeDepDisposableProperty { get; set; }
 
@@ -386,12 +407,16 @@ namespace ServiceStack.Shared.Tests
             if (request.Throw)
                 throw new Exception("Exception requested by user");
 
-            var response = new IocScopeResponse {
+            var response = new IocScopeResponse
+            {
                 Results = {
                     { typeof(FunqSingletonScope).Name, FunqSingletonScope.Count },
                     { typeof(FunqRequestScope).Name, FunqRequestScope.Count },
                     { typeof(FunqNoneScope).Name, FunqNoneScope.Count },
-                },                
+                },
+                InjectsRequest = FunqInjectRequest.Request != null 
+                    ? 1 + (FunqInjectRequest.SecondLevel.Request != null ? 1 : 0)
+                    : 0,
             };
 
             return response;
@@ -409,7 +434,7 @@ namespace ServiceStack.Shared.Tests
         public void Dispose()
         {
             DisposedCount++;
-        }    
+        }
     }
 
     public class IocDispose : IReturn<IocDisposeResponse>

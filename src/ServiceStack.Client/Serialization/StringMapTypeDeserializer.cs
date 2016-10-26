@@ -130,7 +130,7 @@ namespace ServiceStack.Serialization
                     if (propertySerializerEntry.PropertyType == typeof (bool))
                     {
                         //InputExtensions.cs#530 MVC Checkbox helper emits extra hidden input field, generating 2 values, first is the real value
-                        propertyTextValue = propertyTextValue.SplitOnFirst(',').First();
+                        propertyTextValue = propertyTextValue.LeftPart(',');
                     }
 
                     var value = propertySerializerEntry.PropertyParseStringFn(propertyTextValue);
@@ -161,7 +161,7 @@ namespace ServiceStack.Serialization
 
             if (errors.Count > 0)
             {
-                var serializationException = new SerializationException("Unable to bind to request '{0}'".Fmt(type.Name));
+                var serializationException = new SerializationException($"Unable to bind to request '{type.Name}'");
                 serializationException.Data.Add("errors", errors);
                 throw serializationException;
             }

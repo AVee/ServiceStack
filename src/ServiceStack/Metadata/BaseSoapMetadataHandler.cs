@@ -16,11 +16,13 @@ namespace ServiceStack.Metadata
 
         public string OperationName { get; set; }
 
+#if !NETSTANDARD1_6
         public override void Execute(HttpContextBase context)
         {
             var httpReq = context.ToRequest(OperationName);
             ProcessRequestAsync(httpReq, httpReq.Response, OperationName);
         }
+#endif
 
         public override void ProcessRequest(IRequest httpReq, IResponse httpRes, string operationName)
         {
@@ -33,14 +35,14 @@ namespace ServiceStack.Metadata
 
             if (httpReq.QueryString["xsd"] != null)
             {
+#if !NETSTANDARD1_6
                 var xsdNo = Convert.ToInt32(httpReq.QueryString["xsd"]);
                 var schemaSet = XsdUtils.GetXmlSchemaSet(operationTypes);
                 var schemas = schemaSet.Schemas();
                 var i = 0;
                 if (xsdNo >= schemas.Count)
-                {
                     throw new ArgumentOutOfRangeException("xsd");
-                }
+
                 httpRes.ContentType = "text/xml";
                 foreach (XmlSchema schema in schemaSet.Schemas())
                 {
@@ -48,13 +50,14 @@ namespace ServiceStack.Metadata
                     schema.Write(httpRes.OutputStream);
                     break;
                 }
+#endif
             }
             else
             {
                 using (var sw = new StreamWriter(httpRes.OutputStream))
                 {
                     var writer = new HtmlTextWriter(sw);
-                    httpRes.ContentType = "text/html";
+                    httpRes.ContentType = "text/html; charset=utf-8";
                     ProcessOperations(writer, httpReq, httpRes);
                 }
             }

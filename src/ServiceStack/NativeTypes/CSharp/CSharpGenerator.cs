@@ -12,10 +12,12 @@ namespace ServiceStack.NativeTypes.CSharp
     public class CSharpGenerator
     {
         readonly MetadataTypesConfig Config;
+        readonly NativeTypesFeature feature;
 
         public CSharpGenerator(MetadataTypesConfig config)
         {
             Config = config;
+            feature = HostContext.GetPlugin<NativeTypesFeature>();
         }
 
         public static Dictionary<string, string> TypeAliases = new Dictionary<string, string> 
@@ -34,26 +36,34 @@ namespace ServiceStack.NativeTypes.CSharp
             { "Decimal", "decimal" },    
         };
 
+        public static Func<List<MetadataType>, List<MetadataType>> FilterTypes = DefaultFilterTypes;
+
+        public static List<MetadataType> DefaultFilterTypes(List<MetadataType> types) => types;
+
         public string GetCode(MetadataTypes metadata, IRequest request)
         {
             var namespaces = Config.GetDefaultNamespaces(metadata);
 
             metadata.RemoveIgnoredTypesForNet(Config);
 
-            if (Config.GlobalNamespace == null)
+            if (!Config.ExcludeNamespace)
             {
-                metadata.Types.Each(x => namespaces.Add(x.Namespace));
-                metadata.Operations.Each(x => namespaces.Add(x.Request.Namespace));
-            }
-            else
-            {
-                namespaces.Add(Config.GlobalNamespace);
+                if (Config.GlobalNamespace == null)
+                {
+                    metadata.Types.Each(x => namespaces.Add(x.Namespace));
+                    metadata.Operations.Each(x => namespaces.Add(x.Request.Namespace));
+                }
+                else
+                {
+                    namespaces.Add(Config.GlobalNamespace);
+                }
             }
 
             Func<string,string> defaultValue = k =>
                 request.QueryString[k].IsNullOrEmpty() ? "//" : "";
 
-            var sb = new StringBuilderWrapper(new StringBuilder());
+            var sbInner = StringBuilderCache.Allocate();
+            var sb = new StringBuilderWrapper(sbInner);
             sb.AppendLine("/* Options:");
             sb.AppendLine("Date: {0}".Fmt(DateTime.Now.ToString("s").Replace("T"," ")));
             sb.AppendLine("Version: {0}".Fmt(Env.ServiceStackVersion));
@@ -63,6 +73,7 @@ namespace ServiceStack.NativeTypes.CSharp
             sb.AppendLine("{0}GlobalNamespace: {1}".Fmt(defaultValue("GlobalNamespace"), Config.GlobalNamespace));
             sb.AppendLine("{0}MakePartial: {1}".Fmt(defaultValue("MakePartial"), Config.MakePartial));
             sb.AppendLine("{0}MakeVirtual: {1}".Fmt(defaultValue("MakeVirtual"), Config.MakeVirtual));
+            sb.AppendLine("{0}MakeInternal: {1}".Fmt(defaultValue("MakeInternal"), Config.MakeInternal));
             sb.AppendLine("{0}MakeDataContractsExtensible: {1}".Fmt(defaultValue("MakeDataContractsExtensible"), Config.MakeDataContractsExtensible));
             sb.AppendLine("{0}AddReturnMarker: {1}".Fmt(defaultValue("AddReturnMarker"), Config.AddReturnMarker));
             sb.AppendLine("{0}AddDescriptionAsComments: {1}".Fmt(defaultValue("AddDescriptionAsComments"), Config.AddDescriptionAsComments));
@@ -74,6 +85,7 @@ namespace ServiceStack.NativeTypes.CSharp
             sb.AppendLine("{0}InitializeCollections: {1}".Fmt(defaultValue("InitializeCollections"), Config.InitializeCollections));
             sb.AppendLine("{0}IncludeTypes: {1}".Fmt(defaultValue("IncludeTypes"), Config.IncludeTypes.Safe().ToArray().Join(",")));
             sb.AppendLine("{0}ExcludeTypes: {1}".Fmt(defaultValue("ExcludeTypes"), Config.ExcludeTypes.Safe().ToArray().Join(",")));
+            sb.AppendLine("{0}AddNamespaces: {1}".Fmt(defaultValue("AddNamespaces"), Config.AddNamespaces.Safe().ToArray().Join(",")));
             sb.AppendLine("{0}AddDefaultXmlNamespace: {1}".Fmt(defaultValue("AddDefaultXmlNamespace"), Config.AddDefaultXmlNamespace));
 
             //[GeneratedCode]
@@ -114,6 +126,8 @@ namespace ServiceStack.NativeTypes.CSharp
             allTypes.AddRange(requestTypes);
             allTypes.AddRange(responseTypes);
             allTypes.AddRange(types);
+
+            allTypes = FilterTypes(allTypes);
 
             var orderedTypes = allTypes
                 .OrderBy(x => x.Namespace)
@@ -181,7 +195,7 @@ namespace ServiceStack.NativeTypes.CSharp
                 sb.AppendLine("}");
             sb.AppendLine();
 
-            return sb.ToString();
+            return StringBuilderCache.ReturnAndFree(sbInner);
         }
 
         private string AppendType(ref StringBuilderWrapper sb, MetadataType type, string lastNS, List<MetadataType> allTypes, CreateTypeOptions options)
@@ -189,20 +203,23 @@ namespace ServiceStack.NativeTypes.CSharp
             if (type.IsNested.GetValueOrDefault() && !options.IsNestedType)
                 return lastNS;
 
-            var ns = Config.GlobalNamespace ?? type.Namespace;
-            if (ns != lastNS)
+            if (!Config.ExcludeNamespace)
             {
-                if (lastNS != null)
-                    sb.AppendLine("}");
+                var ns = Config.GlobalNamespace ?? type.Namespace;
+                if (ns != lastNS)
+                {
+                    if (lastNS != null)
+                        sb.AppendLine("}");
 
-                lastNS = ns;
+                    lastNS = ns;
 
-                sb.AppendLine();
-                sb.AppendLine("namespace {0}".Fmt(ns.SafeToken()));
-                sb.AppendLine("{");
+                    sb.AppendLine();
+                    sb.AppendLine("namespace {0}".Fmt(ns.SafeToken()));
+                    sb.AppendLine("{");
+                }
+
+                sb = sb.Indent();
             }
-
-            sb = sb.Indent();
 
             sb.AppendLine();
             AppendComments(sb, type.Description);
@@ -215,9 +232,11 @@ namespace ServiceStack.NativeTypes.CSharp
             if (Config.AddGeneratedCodeAttributes)
                 sb.AppendLine("[GeneratedCode(\"AddServiceStackReference\", \"{0}\")]".Fmt(Env.VersionString));
 
+            var typeAccessor = !Config.MakeInternal ? "public" : "internal";
+
             if (type.IsEnum.GetValueOrDefault())
             {
-                sb.AppendLine("public enum {0}".Fmt(Type(type.Name, type.GenericArgs)));
+                sb.AppendLine("{0} enum {1}".Fmt(typeAccessor, Type(type.Name, type.GenericArgs)));
                 sb.AppendLine("{");
                 sb = sb.Indent();
 
@@ -240,7 +259,7 @@ namespace ServiceStack.NativeTypes.CSharp
             {
                 var partial = Config.MakePartial ? "partial " : "";
                 var defType = type.IsInterface() ? "interface" : "class";
-                sb.AppendLine("public {0}{1} {2}".Fmt(partial, defType, Type(type.Name, type.GenericArgs)));
+                sb.AppendLine("{0} {1}{2} {3}".Fmt(typeAccessor, partial, defType, Type(type.Name, type.GenericArgs)));
 
                 //: BaseClass, Interfaces
                 var inheritsList = new List<string>();
@@ -288,7 +307,11 @@ namespace ServiceStack.NativeTypes.CSharp
                 sb.AppendLine("}");
             }
 
-            sb = sb.UnIndent();
+            if (!Config.ExcludeNamespace)
+            {
+                sb = sb.UnIndent();
+            }
+
             return lastNS;
         }
 
@@ -296,11 +319,13 @@ namespace ServiceStack.NativeTypes.CSharp
         {
             if (type.IsInterface())
                 return;
-            if (Config.AddImplicitVersion == null && !Config.InitializeCollections)
+
+            var initCollections = feature.ShouldInitializeCollections(type, Config.InitializeCollections);
+            if (Config.AddImplicitVersion == null && !initCollections)
                 return;
 
             var collectionProps = new List<MetadataPropertyType>();
-            if (type.Properties != null && Config.InitializeCollections)
+            if (type.Properties != null && initCollections)
                 collectionProps = type.Properties.Where(x => x.IsCollection()).ToList();
 
             var addVersionInfo = Config.AddImplicitVersion != null && options.IsRequest;
@@ -347,7 +372,8 @@ namespace ServiceStack.NativeTypes.CSharp
                     if (wasAdded) sb.AppendLine();
 
                     var propType = Type(prop.Type, prop.GenericArgs, includeNested:true);
-                    wasAdded = AppendDataMember(sb, prop.DataMember, dataMemberIndex++);
+                    wasAdded = AppendComments(sb, prop.Description);
+                    wasAdded = AppendDataMember(sb, prop.DataMember, dataMemberIndex++) || wasAdded;
                     wasAdded = AppendAttributes(sb, prop.Attributes) || wasAdded;
                     var visibility = type.IsInterface() ? "" : "public ";
                     sb.AppendLine("{0}{1}{2} {3} {{ get; set; }}"
@@ -391,7 +417,7 @@ namespace ServiceStack.NativeTypes.CSharp
                 }
                 else
                 {
-                    var args = new StringBuilder();
+                    var args = StringBuilderCacheAlt.Allocate();
                     if (attr.ConstructorArgs != null)
                     {
                         foreach (var ctorArg in attr.ConstructorArgs)
@@ -410,7 +436,7 @@ namespace ServiceStack.NativeTypes.CSharp
                             args.Append("{0}={1}".Fmt(attrArg.Name, TypeValue(attrArg.Type, attrArg.Value)));
                         }
                     }
-                    sb.AppendLine("[{0}({1})]".Fmt(attr.Name, args));
+                    sb.AppendLine("[{0}({1})]".Fmt(attr.Name, StringBuilderCacheAlt.ReturnAndFree(args)));
                 }
             }
 
@@ -442,7 +468,7 @@ namespace ServiceStack.NativeTypes.CSharp
                 var parts = type.Split('`');
                 if (parts.Length > 1)
                 {
-                    var args = new StringBuilder();
+                    var args = StringBuilderCacheAlt.Allocate();
                     foreach (var arg in genericArgs)
                     {
                         if (args.Length > 0)
@@ -452,7 +478,7 @@ namespace ServiceStack.NativeTypes.CSharp
                     }
 
                     var typeName = NameOnly(type, includeNested: includeNested).SanitizeType();
-                    return "{0}<{1}>".Fmt(typeName, args);
+                    return "{0}<{1}>".Fmt(typeName, StringBuilderCacheAlt.ReturnAndFree(args));
                 }
             }
 
@@ -474,27 +500,29 @@ namespace ServiceStack.NativeTypes.CSharp
 
         public static string NameOnly(string type, bool includeNested = false)
         {
-            var name = type.SplitOnFirst('`')[0];
+            var name = type.LeftPart('`');
 
             if (!includeNested)
-                name = name.SplitOnLast('.').Last();
+                name = name.LastRightPart('.');
 
             return name.SafeToken();
         }
 
-        public void AppendComments(StringBuilderWrapper sb, string desc)
+        public bool AppendComments(StringBuilderWrapper sb, string desc)
         {
-            if (desc == null) return;
+            if (desc == null) return false;
 
             if (Config.AddDescriptionAsComments)
             {
                 sb.AppendLine("///<summary>");
                 sb.AppendLine("///{0}".Fmt(desc.SafeComment()));
                 sb.AppendLine("///</summary>");
+                return false;
             }
             else
             {
                 sb.AppendLine("[Description({0})]".Fmt(desc.QuotedSafeValue()));
+                return true;
             }
         }
 

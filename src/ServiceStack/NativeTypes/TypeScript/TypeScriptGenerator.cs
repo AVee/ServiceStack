@@ -10,11 +10,13 @@ namespace ServiceStack.NativeTypes.TypeScript
     public class TypeScriptGenerator
     {
         readonly MetadataTypesConfig Config;
+        readonly NativeTypesFeature feature;
         List<string> conflictTypeNames = new List<string>();
 
         public TypeScriptGenerator(MetadataTypesConfig config)
         {
             Config = config;
+            feature = HostContext.GetPlugin<NativeTypesFeature>();
         }
 
         public static List<string> DefaultImports = new List<string>
@@ -42,6 +44,83 @@ namespace ServiceStack.NativeTypes.TypeScript
             {"Decimal", "number"},
             {"List", "Array"},
         };
+        private static string declaredEmptyString = "\"\"";
+        private static Dictionary<string, string> primitiveDefaultValues = new Dictionary<string, string>
+        {
+            {"String", declaredEmptyString},
+            {"string", declaredEmptyString},
+            {"Boolean", "false"},
+            {"DateTime", declaredEmptyString},
+            {"DateTimeOffset", declaredEmptyString},
+            {"TimeSpan", declaredEmptyString},
+            {"Guid", declaredEmptyString},
+            {"Char", declaredEmptyString},
+            {"int", "0"},
+            {"float", "0"},
+            {"double", "0"},
+            {"Byte", "0"},
+            {"Int16", "0"},
+            {"Int32", "0"},
+            {"Int64", "0"},
+            {"UInt16", "0"},
+            {"UInt32", "0"},
+            {"UInt64", "0"},
+            {"Single", "0"},
+            {"Double", "0"},
+            {"Decimal", "0"},
+            {"number", "0"},
+            {"List", "[]"}
+        };
+
+        public static Func<List<MetadataType>, List<MetadataType>> FilterTypes = DefaultFilterTypes;
+
+        public static List<MetadataType> DefaultFilterTypes(List<MetadataType> types)
+        {
+            return types.OrderTypesByDeps();
+        }
+
+        private void AddTypeToSortedList(List<MetadataType> allTypes, List<MetadataType> sortedTypes, MetadataType metadataType)
+        {
+            if (sortedTypes.Contains(metadataType))
+                return;
+
+            if (metadataType == null)
+                return;
+
+            if (metadataType.Inherits == null)
+            {
+                sortedTypes.Add(metadataType);
+                return;
+            }
+
+            var inheritedMetadataType = FindMetadataTypeByMetadataTypeName(allTypes, metadataType.Inherits);
+            // Find and add base class first
+            AddTypeToSortedList(allTypes,sortedTypes, inheritedMetadataType);
+
+            if (!sortedTypes.Contains(metadataType))
+                sortedTypes.Add(metadataType);
+        }
+
+        private MetadataType FindMetadataTypeByMetadataTypeName(List<MetadataType> allTypes,
+            MetadataTypeName metadataTypeName)
+        {
+            if (metadataTypeName == null)
+                return null;
+            var metaDataType = allTypes.Where(x => x.Name == metadataTypeName.Name &&
+                                                   x.Namespace == metadataTypeName.Namespace)
+                .FirstNonDefault();
+            return metaDataType;
+        }
+
+        private List<MetadataType> CreateSortedTypeList(List<MetadataType> allTypes)
+        {
+            List<MetadataType> result = new List<MetadataType>();
+            foreach (var metadataType in allTypes)
+            {
+                AddTypeToSortedList(allTypes,result,metadataType);
+            }
+            return result;
+        }
 
         public string GetCode(MetadataTypes metadata, IRequest request, INativeTypesMetadata nativeTypes)
         {
@@ -54,16 +133,13 @@ namespace ServiceStack.NativeTypes.TypeScript
                 ? Config.DefaultImports
                 : DefaultImports;
 
-            // Look first for shortest Namespace ending with `ServiceModel` convention, else shortest ns
-            var globalNamespace = Config.GlobalNamespace
-                ?? typeNamespaces.Where(x => x.EndsWith("ServiceModel"))
-                    .OrderBy(x => x).FirstOrDefault()
-                ?? typeNamespaces.OrderBy(x => x).First();
+            var globalNamespace = Config.GlobalNamespace;
 
             Func<string, string> defaultValue = k =>
                 request.QueryString[k].IsNullOrEmpty() ? "//" : "";
 
-            var sb = new StringBuilderWrapper(new StringBuilder());
+            var sbInner = StringBuilderCache.Allocate();
+            var sb = new StringBuilderWrapper(sbInner);
             sb.AppendLine("/* Options:");
             sb.AppendLine("Date: {0}".Fmt(DateTime.Now.ToString("s").Replace("T", " ")));
             sb.AppendLine("Version: {0}".Fmt(Env.ServiceStackVersion));
@@ -71,11 +147,12 @@ namespace ServiceStack.NativeTypes.TypeScript
             sb.AppendLine("BaseUrl: {0}".Fmt(Config.BaseUrl));
             sb.AppendLine();
             sb.AppendLine("{0}GlobalNamespace: {1}".Fmt(defaultValue("GlobalNamespace"), Config.GlobalNamespace));
-            sb.AppendLine("{0}ExportAsTypes: {1}".Fmt(defaultValue("ExportAsTypes"), Config.ExportAsTypes));
+            //sb.AppendLine("{0}ExportAsTypes: {1}".Fmt(defaultValue("ExportAsTypes"), Config.ExportAsTypes));
             sb.AppendLine("{0}MakePropertiesOptional: {1}".Fmt(defaultValue("MakePropertiesOptional"), Config.MakePropertiesOptional));
             sb.AppendLine("{0}AddServiceStackTypes: {1}".Fmt(defaultValue("AddServiceStackTypes"), Config.AddServiceStackTypes));
             sb.AppendLine("{0}AddResponseStatus: {1}".Fmt(defaultValue("AddResponseStatus"), Config.AddResponseStatus));
             sb.AppendLine("{0}AddImplicitVersion: {1}".Fmt(defaultValue("AddImplicitVersion"), Config.AddImplicitVersion));
+            sb.AppendLine("{0}AddDescriptionAsComments: {1}".Fmt(defaultValue("AddDescriptionAsComments"), Config.AddDescriptionAsComments));
             sb.AppendLine("{0}IncludeTypes: {1}".Fmt(defaultValue("IncludeTypes"), Config.IncludeTypes.Safe().ToArray().Join(",")));
             sb.AppendLine("{0}ExcludeTypes: {1}".Fmt(defaultValue("ExcludeTypes"), Config.ExcludeTypes.Safe().ToArray().Join(",")));
             sb.AppendLine("{0}DefaultImports: {1}".Fmt(defaultValue("DefaultImports"), defaultImports.Join(",")));
@@ -92,7 +169,9 @@ namespace ServiceStack.NativeTypes.TypeScript
             var responseTypes = metadata.Operations
                 .Where(x => x.Response != null)
                 .Select(x => x.Response).ToHashSet();
-            var types = metadata.Types.ToHashSet();
+
+            // Base Types need to be written first
+            var types = CreateSortedTypeList(metadata.Types);
 
             var allTypes = new List<MetadataType>();
             allTypes.AddRange(types);
@@ -100,9 +179,11 @@ namespace ServiceStack.NativeTypes.TypeScript
             allTypes.AddRange(requestTypes);
             allTypes.RemoveAll(x => x.IgnoreType(Config));
 
+            allTypes = FilterTypes(allTypes);
+
             //TypeScript doesn't support reusing same type name with different generic airity
             var conflictPartialNames = allTypes.Map(x => x.Name).Distinct()
-                .GroupBy(g => g.SplitOnFirst('`')[0])
+                .GroupBy(g => g.LeftPart('`'))
                 .Where(g => g.Count() > 1)
                 .Select(g => g.Key)
                 .ToList();
@@ -112,11 +193,16 @@ namespace ServiceStack.NativeTypes.TypeScript
                 .Map(x => x.Name);
 
             defaultImports.Each(x => sb.AppendLine("import {0};".Fmt(x)));
-            sb.AppendLine();
 
-            var moduleDef = Config.ExportAsTypes ? "" : "declare ";
-            sb.AppendLine("{0}module {1}".Fmt(moduleDef, globalNamespace.SafeToken()));
-            sb.AppendLine("{");
+            if (!string.IsNullOrEmpty(globalNamespace))
+            {
+                var moduleDef = Config.ExportAsTypes ? "" : "declare ";
+                sb.AppendLine();
+                sb.AppendLine("{0}module {1}".Fmt(moduleDef, globalNamespace.SafeToken()));
+                sb.AppendLine("{");
+
+                sb = sb.Indent();
+            }
 
             //ServiceStack core interfaces
             foreach (var type in allTypes)
@@ -180,17 +266,19 @@ namespace ServiceStack.NativeTypes.TypeScript
                 }
             }
 
-            sb.AppendLine();
-            sb.AppendLine("}");
+            if (!string.IsNullOrEmpty(globalNamespace))
+            {
+                sb = sb.UnIndent();
+                sb.AppendLine();
+                sb.AppendLine("}");
+            }
 
-            return sb.ToString();
+            return StringBuilderCache.ReturnAndFree(sbInner);
         }
 
         private string AppendType(ref StringBuilderWrapper sb, MetadataType type, string lastNS,
             CreateTypeOptions options)
         {
-            sb = sb.Indent();
-
             sb.AppendLine();
             AppendComments(sb, type.Description);
             if (type.Routes != null)
@@ -202,28 +290,54 @@ namespace ServiceStack.NativeTypes.TypeScript
 
             if (type.IsEnum.GetValueOrDefault())
             {
-                var typeDeclaration = !Config.ExportAsTypes
-                    ? "enum"
-                    : "export const enum";
-
-                sb.AppendLine("{0} {1}".Fmt(typeDeclaration, Type(type.Name, type.GenericArgs)));
-                sb.AppendLine("{");
-                sb = sb.Indent();
-
-                if (type.EnumNames != null)
+                if (type.IsEnumInt.GetValueOrDefault() || type.EnumNames.IsEmpty())
                 {
+                    var typeDeclaration = !Config.ExportAsTypes
+                        ? "enum"
+                        : "export enum";
+
+                    sb.AppendLine("{0} {1}".Fmt(typeDeclaration, Type(type.Name, type.GenericArgs)));
+                    sb.AppendLine("{");
+                    sb = sb.Indent();
+
+                    if (type.EnumNames != null)
+                    {
+                        for (var i = 0; i < type.EnumNames.Count; i++)
+                        {
+                            var name = type.EnumNames[i];
+                            var value = type.EnumValues != null ? type.EnumValues[i] : null;
+
+                            sb.AppendLine(value == null //Enum Value's are not impacted by JS Style
+                                ? "{0},".Fmt(name)
+                                : "{0} = {1},".Fmt(name, value));
+                        }
+                    }
+
+                    sb = sb.UnIndent();
+                    sb.AppendLine("}");
+                }
+                else
+                {
+                    var sbType = StringBuilderCache.Allocate();
+
+                    var typeDeclaration = !Config.ExportAsTypes
+                        ? "type"
+                        : "export type";
+
+                    sbType.Append("{0} {1} = ".Fmt(typeDeclaration, Type(type.Name, type.GenericArgs)));
+
                     for (var i = 0; i < type.EnumNames.Count; i++)
                     {
-                        var name = type.EnumNames[i];
-                        var value = type.EnumValues != null ? type.EnumValues[i] : null;
-                        sb.AppendLine(value == null
-                            ? "{0},".Fmt(name.PropertyStyle())
-                            : "{0} = {1},".Fmt(name.PropertyStyle(), value));
-                    }
-                }
+                        if (i > 0)
+                            sbType.Append(" | ");
 
-                sb = sb.UnIndent();
-                sb.AppendLine("}");
+                        sbType.Append('"').Append(type.EnumNames[i]).Append('"');
+                    }
+
+                    sbType.Append(";");
+
+                    sb.AppendLine(StringBuilderCache.ReturnAndFree(sbType));
+                }
             }
             else
             {
@@ -233,12 +347,35 @@ namespace ServiceStack.NativeTypes.TypeScript
                 if (type.Inherits != null)
                     extends.Add(Type(type.Inherits).InDeclarationType());
 
+                string responseTypeExpression = null;
+
                 var interfaces = new List<string>();
-                if (options.ImplementsFn != null)
+                var implStr = options.ImplementsFn?.Invoke();
+                if (!string.IsNullOrEmpty(implStr))
                 {
-                    var implStr = options.ImplementsFn();
-                    if (!string.IsNullOrEmpty(implStr))
-                        interfaces.Add(implStr);
+                    interfaces.Add(implStr);
+
+                    if (implStr.StartsWith("IReturn<"))
+                    {
+                        var types = implStr.RightPart('<');
+                        var returnType = types.Substring(0, types.Length - 1);
+
+                        if (returnType == "any")
+                            returnType = "Object";
+
+                        // This is to avoid invalid syntax such as "return new string()"
+                        string replaceReturnType;
+                        if (primitiveDefaultValues.TryGetValue(returnType, out replaceReturnType))
+                            returnType = replaceReturnType;
+
+                        responseTypeExpression = replaceReturnType == null ?
+                            "createResponse() {{ return new {0}(); }}".Fmt(returnType) :
+                            "createResponse() {{ return {0}; }}".Fmt(returnType);
+                    }
+                    else if (implStr == "IReturnVoid")
+                    {
+                        responseTypeExpression = "createResponse() {}";
+                    }
                 }
 
                 var isClass = Config.ExportAsTypes && !type.IsInterface.GetValueOrDefault();
@@ -265,7 +402,7 @@ namespace ServiceStack.NativeTypes.TypeScript
 
                 var typeDeclaration = !Config.ExportAsTypes
                     ? "interface"
-                    : "export {0}".Fmt(isClass ? "class" : "interface"); 
+                    : $"export {(isClass ? "class" : "interface")}"; 
 
                 sb.AppendLine("{0} {1}{2}".Fmt(typeDeclaration, Type(type.Name, type.GenericArgs), extend));
                 sb.AppendLine("{");
@@ -283,11 +420,15 @@ namespace ServiceStack.NativeTypes.TypeScript
                     includeResponseStatus: Config.AddResponseStatus && options.IsResponse
                         && type.Properties.Safe().All(x => x.Name != typeof(ResponseStatus).Name));
 
+                if (Config.ExportAsTypes && responseTypeExpression != null)
+                {
+                    sb.AppendLine(responseTypeExpression);
+                    sb.AppendLine("getTypeName() {{ return \"{0}\"; }}".Fmt(type.Name));
+                }
+
                 sb = sb.UnIndent();
                 sb.AppendLine("}");
             }
-
-            sb = sb.UnIndent();
 
             return lastNS;
         }
@@ -320,7 +461,8 @@ namespace ServiceStack.NativeTypes.TypeScript
                     if (Config.ExportAsTypes && !type.IsInterface.GetValueOrDefault())
                         optional = "";
 
-                    wasAdded = AppendDataMember(sb, prop.DataMember, dataMemberIndex++);
+                    wasAdded = AppendComments(sb, prop.Description);
+                    wasAdded = AppendDataMember(sb, prop.DataMember, dataMemberIndex++) || wasAdded;
                     wasAdded = AppendAttributes(sb, prop.Attributes) || wasAdded;
                     sb.AppendLine("{1}{2}: {0};".Fmt(propType, prop.Name.SafeToken().PropertyStyle(), optional));
                 }
@@ -349,7 +491,7 @@ namespace ServiceStack.NativeTypes.TypeScript
                 }
                 else
                 {
-                    var args = new StringBuilder();
+                    var args = StringBuilderCacheAlt.Allocate();
                     if (attr.ConstructorArgs != null)
                     {
                         foreach (var ctorArg in attr.ConstructorArgs)
@@ -368,7 +510,7 @@ namespace ServiceStack.NativeTypes.TypeScript
                             args.Append("{0}={1}".Fmt(attrArg.Name, TypeValue(attrArg.Type, attrArg.Value)));
                         }
                     }
-                    sb.AppendLine("// @{0}({1})".Fmt(attr.Name, args));
+                    sb.AppendLine("// @{0}({1})".Fmt(attr.Name, StringBuilderCacheAlt.ReturnAndFree(args)));
                 }
             }
 
@@ -386,7 +528,7 @@ namespace ServiceStack.NativeTypes.TypeScript
             if (value.StartsWith("typeof("))
             {
                 //Only emit type as Namespaces are merged
-                var typeNameOnly = value.Substring(7, value.Length - 8).SplitOnLast('.').Last();
+                var typeNameOnly = value.Substring(7, value.Length - 8).LastRightPart('.');
                 return "typeof(" + typeNameOnly + ")";
             }
 
@@ -436,7 +578,7 @@ namespace ServiceStack.NativeTypes.TypeScript
                 var parts = type.Split('`');
                 if (parts.Length > 1)
                 {
-                    var args = new StringBuilder();
+                    var args = StringBuilderCacheAlt.Allocate();
                     foreach (var arg in genericArgs)
                     {
                         if (args.Length > 0)
@@ -446,7 +588,7 @@ namespace ServiceStack.NativeTypes.TypeScript
                     }
 
                     var typeName = TypeAlias(type);
-                    return "{0}<{1}>".Fmt(typeName, args);
+                    return "{0}<{1}>".Fmt(typeName, StringBuilderCacheAlt.ReturnAndFree(args));
                 }
             }
 
@@ -470,18 +612,20 @@ namespace ServiceStack.NativeTypes.TypeScript
         {
             var name = conflictTypeNames.Contains(type)
                 ? type.Replace('`','_')
-                : type.SplitOnFirst('`')[0];
+                : type.LeftPart('`');
 
-            return name.SplitOnLast('.').Last().SafeToken();
+            return name.LastRightPart('.').SafeToken();
         }
 
-        public void AppendComments(StringBuilderWrapper sb, string desc)
+        public bool AppendComments(StringBuilderWrapper sb, string desc)
         {
-            if (desc == null) return;
-
-            sb.AppendLine("/**");
-            sb.AppendLine("* {0}".Fmt(desc.SafeComment()));
-            sb.AppendLine("*/");
+            if (desc != null && Config.AddDescriptionAsComments)
+            {
+                sb.AppendLine("/**");
+                sb.AppendLine("* {0}".Fmt(desc.SafeComment()));
+                sb.AppendLine("*/");
+            }
+            return false;
         }
 
         public void AppendDataContract(StringBuilderWrapper sb, MetadataDataContract dcMeta)

@@ -21,9 +21,9 @@ namespace ServiceStack.Configuration
             public MultiSettingsWrapper(IAppSettings[] appSettings)
             {
                 if (appSettings.Length == 0)
-                    throw new ArgumentNullException("appSettings");
+                    throw new ArgumentNullException(nameof(appSettings));
 
-                this.appSettings = appSettings ?? new IAppSettings[0];
+                this.appSettings = appSettings;
             }
 
             public string Get(string key)
@@ -42,8 +42,7 @@ namespace ServiceStack.Configuration
 
             public void Set<T>(string key, T value)
             {
-                var appSetting = appSettings.First();
-                appSetting.Set(key, value);
+                appSettings.Each(x => x.Set(key, value));
             }
         }
     }

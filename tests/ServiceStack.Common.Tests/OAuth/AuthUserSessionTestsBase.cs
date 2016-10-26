@@ -1,4 +1,5 @@
-﻿using System;
+﻿#if !NETCORE_SUPPORT
+using System;
 using System.Collections.Generic;
 using Moq;
 using NUnit.Framework;
@@ -76,7 +77,11 @@ namespace ServiceStack.Common.Tests.OAuth
 
         protected void InitTest(IUserAuthRepository userAuthRepository)
         {
-            ((IClearable)userAuthRepository).Clear();
+            try
+            {
+                ((IClearable)userAuthRepository).Clear();
+            }
+            catch { /*ignore*/ }
 
             var appsettingsMock = new Mock<IAppSettings>();
             var appSettings = appsettingsMock.Object;
@@ -122,7 +127,7 @@ namespace ServiceStack.Common.Tests.OAuth
                 oAuthUserSession = request.ReloadSession();
 
             oAuthUserSession.Id = request.Response.CreateSessionId(request);
-            request.Items[SessionFeature.RequestItemsSessionKey] = oAuthUserSession;
+            request.Items[Keywords.Session] = oAuthUserSession;
 
             var mockAppHost = new BasicAppHost();
 
@@ -137,10 +142,9 @@ namespace ServiceStack.Common.Tests.OAuth
 
             var registrationService = new RegisterService
             {
-                AuthRepo = userAuthRepository,
                 Request = request,
                 RegistrationValidator =
-                    new RegistrationValidator { UserAuthRepo = RegistrationServiceTests.GetStubRepo() },
+                    new RegistrationValidator(),
             };
             registrationService.SetResolver(mockAppHost);
 
@@ -202,3 +206,4 @@ namespace ServiceStack.Common.Tests.OAuth
         }
     }
 }
+#endif

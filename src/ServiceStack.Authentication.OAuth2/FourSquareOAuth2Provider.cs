@@ -100,7 +100,7 @@ namespace ServiceStack.Authentication.OAuth2
                         }
                     }
 
-                    authService.SaveSession(session, this.SessionExpiry);
+                    this.SaveSession(authService, session, SessionExpiry);
                     return httpResult;
                 }
                 catch (ProtocolException ex)

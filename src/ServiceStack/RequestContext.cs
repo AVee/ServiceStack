@@ -2,11 +2,19 @@
 using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+
+#if !NETSTANDARD1_6
 using System.Runtime.Remoting.Messaging;
-using ServiceStack.Logging;
+#else
+using System.Threading;
+#endif
 
 namespace ServiceStack
 {
+    /// <summary>
+    /// Abstraction to provide a context per request.
+    /// in spnet.web its equivalent to <see cref="System.Web.HttpContext"></see>.Current.Items falls back to CallContext
+    /// </summary>
     public class RequestContext
     {
         public static readonly RequestContext Instance = new RequestContext();
@@ -20,6 +28,10 @@ namespace ServiceStack
         [ThreadStatic]
         public static IDictionary RequestItems;
 
+#if NETSTANDARD1_6
+        public static AsyncLocal<IDictionary> AsyncRequestItems = new AsyncLocal<IDictionary>();
+#endif
+
         /// <summary>
         /// Gets a list of items for this request. 
         /// </summary>
@@ -30,9 +42,7 @@ namespace ServiceStack
         {
             get
             {
-                return GetItems() ?? (System.Web.HttpContext.Current != null
-                    ? System.Web.HttpContext.Current.Items
-                    : CreateItems());
+                return GetItems() ?? CreateItems();
             }
             set
             {
@@ -44,6 +54,7 @@ namespace ServiceStack
 
         private IDictionary GetItems()
         {
+#if !NETSTANDARD1_6
             try
             {
                 if (UseThreadStatic)
@@ -53,6 +64,9 @@ namespace ServiceStack
                 if (!ServiceStackHost.IsReady())
                     return new Dictionary<object, object>();
 
+                if (System.Web.HttpContext.Current != null)
+                    return System.Web.HttpContext.Current.Items;
+
                 return CallContext.LogicalGetData(_key) as IDictionary;
             }
             catch (NotImplementedException)
@@ -60,10 +74,14 @@ namespace ServiceStack
                 //Fixed in Mono master: https://github.com/mono/mono/pull/817
                 return CallContext.GetData(_key) as IDictionary;
             }
+#else
+            return AsyncRequestItems.Value;
+#endif
         }
 
         private IDictionary CreateItems(IDictionary items = null)
         {
+#if !NETSTANDARD1_6
             try
             {
                 if (UseThreadStatic)
@@ -81,6 +99,9 @@ namespace ServiceStack
                 CallContext.SetData(_key, items ?? (items = new ConcurrentDictionary<object, object>()));
             }
             return items;
+#else
+            return AsyncRequestItems.Value = items ?? new Dictionary<object, object>();
+#endif
         }
 
         public T GetOrCreate<T>(Func<T> createFn)
@@ -93,10 +114,14 @@ namespace ServiceStack
 
         public void EndRequest()
         {
+#if !NETSTANDARD1_6
             if (UseThreadStatic)
                 Items = null;
             else
                 CallContext.FreeNamedDataSlot(_key);
+#else
+            AsyncRequestItems.Value = null;
+#endif
         }
 
         /// <summary>
@@ -109,11 +134,11 @@ namespace ServiceStack
             if (instance == null) return;
             if (instance is IService) return; //IService's are already disposed right after they've been executed
 
-            DispsableTracker dispsableTracker = null;
-            if (!Items.Contains(DispsableTracker.HashId))
-                Items[DispsableTracker.HashId] = dispsableTracker = new DispsableTracker();
+            DisposableTracker dispsableTracker = null;
+            if (!Items.Contains(DisposableTracker.HashId))
+                Items[DisposableTracker.HashId] = dispsableTracker = new DisposableTracker();
             if (dispsableTracker == null)
-                dispsableTracker = (DispsableTracker)Items[DispsableTracker.HashId];
+                dispsableTracker = (DisposableTracker)Items[DisposableTracker.HashId];
             dispsableTracker.Add(instance);
         }
 
@@ -127,42 +152,16 @@ namespace ServiceStack
             if (!ServiceStackHost.Instance.Config.DisposeDependenciesAfterUse) return false;
 
             var ctxItems = Instance.Items;
-            var disposables = ctxItems[DispsableTracker.HashId] as DispsableTracker;
+            var disposables = ctxItems[DisposableTracker.HashId] as DisposableTracker;
 
             if (disposables != null)
             {
                 disposables.Dispose();
-                ctxItems.Remove(DispsableTracker.HashId);
+                ctxItems.Remove(DisposableTracker.HashId);
                 return true;
             }
 
             return false;
-        }
-    }
-
-    [Serializable]
-    public class DispsableTracker : IDisposable
-    {
-        public static ILog Log = LogManager.GetLogger(typeof(RequestContext));
-
-        public const string HashId = "__disposables";
-
-        List<WeakReference> disposables = new List<WeakReference>();
-
-        public void Add(IDisposable instance)
-        {
-            disposables.Add(new WeakReference(instance));
-        }
-
-        public void Dispose()
-        {
-            foreach (var wr in disposables)
-            {
-                var disposable = (IDisposable)wr.Target;
-                if (!wr.IsAlive) continue;
-
-                HostContext.Release(disposable);
-            }
         }
     }
 }

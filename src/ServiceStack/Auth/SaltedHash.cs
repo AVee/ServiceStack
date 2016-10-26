@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Security.Cryptography;
 using System.Text;
+using ServiceStack.Text;
 
 namespace ServiceStack.Auth
 {
@@ -15,6 +16,9 @@ namespace ServiceStack.Auth
     /// <summary>
     /// Thank you Martijn
     /// http://www.dijksterhuis.org/creating-salted-hash-values-in-c/
+    /// 
+    /// Stronger/Slower Alternative: 
+    /// https://github.com/defuse/password-hashing/blob/master/PasswordStorage.cs
     /// </summary>
     public class SaltedHash : IHashProvider
     {
@@ -27,7 +31,7 @@ namespace ServiceStack.Auth
             SalthLength = theSaltLength;
         }
 
-        public SaltedHash() : this(new SHA256Managed(), 4) {}
+        public SaltedHash() : this(SHA256.Create(), 4) {}
 
         private byte[] ComputeHash(byte[] Data, byte[] Salt)
         {
@@ -42,8 +46,12 @@ namespace ServiceStack.Auth
         {
             Salt = new byte[SalthLength];
 
-            var random = new RNGCryptoServiceProvider();
+            var random = RandomNumberGenerator.Create();
+#if !NETSTANDARD1_6
             random.GetNonZeroBytes(Salt);
+#else
+            random.GetBytes(Salt);
+#endif
 
             Hash = ComputeHash(Data, Salt);
         }
@@ -88,8 +96,8 @@ namespace ServiceStack.Auth
     {
         public static string ToSha256Hash(this string value)
         {
-            var sb = new StringBuilder();
-            using (var hash = SHA256Managed.Create())
+            var sb = StringBuilderCache.Allocate();
+            using (var hash = SHA256.Create())
             {
                 var result = hash.ComputeHash(value.ToUtf8Bytes());
                 foreach (var b in result)
@@ -97,12 +105,12 @@ namespace ServiceStack.Auth
                     sb.Append(b.ToString("x2"));
                 }
             }
-            return sb.ToString();
+            return StringBuilderCache.ReturnAndFree(sb);
         }
 
         public static byte[] ToSha256HashBytes(this byte[] bytes)
         {
-            using (var hash = SHA256Managed.Create())
+            using (var hash = SHA256.Create())
             {
                 return hash.ComputeHash(bytes);
             }
@@ -110,7 +118,7 @@ namespace ServiceStack.Auth
 
         public static byte[] ToSha512HashBytes(this byte[] bytes)
         {
-            using (var hash = SHA512Managed.Create())
+            using (var hash = SHA512.Create())
             {
                 return hash.ComputeHash(bytes);
             }

@@ -1,7 +1,6 @@
 ﻿using System;
 using System.IO;
 using System.Net;
-using ServiceStack.Text;
 using ServiceStack.Web;
 
 namespace ServiceStack
@@ -78,10 +77,10 @@ namespace ServiceStack
         /// </summary>
         public static void ExtractHttpRanges(this string rangeHeader, long contentLength, out long rangeStart, out long rangeEnd)
         {
-            var rangeParts = rangeHeader.SplitOnFirst("=")[1].SplitOnFirst("-");
-            rangeStart = Int64.Parse(rangeParts[0]);
-            rangeEnd = rangeParts.Length == 2 && !String.IsNullOrEmpty(rangeParts[1])
-                           ? Int32.Parse(rangeParts[1]) //the client requested a chunk
+            var rangeParts = rangeHeader.RightPart("=").SplitOnFirst("-");
+            rangeStart = long.Parse(rangeParts[0]);
+            rangeEnd = rangeParts.Length == 2 && !string.IsNullOrEmpty(rangeParts[1])
+                           ? int.Parse(rangeParts[1]) //the client requested a chunk
                            : contentLength - 1;
         }
 
@@ -90,7 +89,7 @@ namespace ServiceStack
         /// </summary>
         public static void AddHttpRangeResponseHeaders(this IResponse response, long rangeStart, long rangeEnd, long contentLength)
         {
-            response.AddHeader(HttpHeaders.ContentRange, "bytes {0}-{1}/{2}".Fmt(rangeStart, rangeEnd, contentLength));
+            response.AddHeader(HttpHeaders.ContentRange, $"bytes {rangeStart}-{rangeEnd}/{contentLength}");
             response.StatusCode = (int)HttpStatusCode.PartialContent;
             response.SetContentLength(rangeEnd - rangeStart + 1);
         }

@@ -1,7 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Text;
+using System.Globalization;
 using ServiceStack.Host.Handlers;
+using ServiceStack.Text;
 using ServiceStack.Web;
 
 namespace ServiceStack
@@ -122,30 +123,27 @@ namespace ServiceStack
 
                 httpRes.ContentType = MimeTypes.Xml;
 
-                var xml = new StringBuilder();
+                var xml = StringBuilderCache.Allocate();
                 xml.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
 
                 xml.Append("<sitemapindex");
                 foreach (var ns in feature.UrlSetNamespaces)
                 {
-                    xml.Append(" {0}=\"{1}\"".Fmt(ns.Key, ns.Value));
+                    xml.Append($" {ns.Key}=\"{ns.Value}\"");
                 }
                 xml.AppendLine(">");
 
-                if (feature.CustomXml != null)
-                {
-                    if (feature.CustomXml.SitemapIndexHeaderXml != null)
-                        xml.AppendLine(feature.CustomXml.SitemapIndexHeaderXml);
-                }
+                if (feature.CustomXml?.SitemapIndexHeaderXml != null)
+                    xml.AppendLine(feature.CustomXml.SitemapIndexHeaderXml);
 
                 foreach (var sitemap in feature.SitemapIndex.Safe())
                 {
                     xml.AppendLine("<sitemap>");
 
                     if (sitemap.Location != null || sitemap.AtPath != null)
-                        xml.AppendLine("  <loc>{0}</loc>".Fmt((sitemap.Location ?? sitemap.AtPath.ToAbsoluteUri()).EncodeXml()));
+                        xml.AppendLine($"  <loc>{(sitemap.Location ?? sitemap.AtPath.ToAbsoluteUri()).EncodeXml()}</loc>");
                     if (sitemap.LastModified != null)
-                        xml.AppendLine("  <lastmod>{0}</lastmod>".Fmt(sitemap.LastModified.Value.ToString("yyyy-MM-dd")));
+                        xml.AppendLine($"  <lastmod>{sitemap.LastModified.Value.ToString("yyyy-MM-dd")}</lastmod>");
 
                     if (sitemap.CustomXml != null)
                         xml.AppendLine(sitemap.CustomXml);
@@ -153,14 +151,12 @@ namespace ServiceStack
                     xml.AppendLine("</sitemap>");
                 }
 
-                if (feature.CustomXml != null)
-                {
-                    if (feature.CustomXml.SitemapIndexFooterXml != null)
-                        xml.AppendLine(feature.CustomXml.SitemapIndexFooterXml);
-                }
+                if (feature.CustomXml?.SitemapIndexFooterXml != null)
+                    xml.AppendLine(feature.CustomXml.SitemapIndexFooterXml);
 
                 xml.AppendLine("</sitemapindex>");
-                httpRes.EndHttpHandlerRequest(skipClose: true, afterHeaders: r => r.Write(xml.ToString()));
+                var text = StringBuilderCache.ReturnAndFree(xml);
+                httpRes.EndHttpHandlerRequest(skipClose: true, afterHeaders: r => r.Write(text));
             }
         }
 
@@ -168,7 +164,7 @@ namespace ServiceStack
         {
             private readonly SitemapFeature feature;
 
-            private List<SitemapUrl> urlSet;
+            private readonly List<SitemapUrl> urlSet;
 
             public SitemapUrlSetHandler(SitemapFeature feature, List<SitemapUrl> urlSet)
             {
@@ -183,7 +179,7 @@ namespace ServiceStack
 
                 httpRes.ContentType = MimeTypes.Xml;
 
-                var xml = new StringBuilder();
+                var xml = StringBuilderCache.Allocate();
                 xml.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
 
                 xml.Append("<urlset");
@@ -193,24 +189,21 @@ namespace ServiceStack
                 }
                 xml.AppendLine(">");
 
-                if (feature.CustomXml != null)
-                {
-                    if (feature.CustomXml.UrlSetHeaderXml != null)
-                        xml.AppendLine(feature.CustomXml.UrlSetHeaderXml);
-                }
+                if (feature.CustomXml?.UrlSetHeaderXml != null)
+                    xml.AppendLine(feature.CustomXml.UrlSetHeaderXml);
 
                 foreach (var url in urlSet.Safe())
                 {
                     xml.AppendLine("<url>");
 
                     if (url.Location != null)
-                        xml.AppendLine("  <loc>{0}</loc>".Fmt(url.Location.EncodeXml()));
+                        xml.AppendLine($"  <loc>{url.Location.EncodeXml()}</loc>");
                     if (url.LastModified != null)
-                        xml.AppendLine("  <lastmod>{0}</lastmod>".Fmt(url.LastModified.Value.ToString("yyyy-MM-dd")));
+                        xml.AppendLine($"  <lastmod>{url.LastModified.Value.ToString("yyyy-MM-dd")}</lastmod>");
                     if (url.ChangeFrequency != null)
-                        xml.AppendLine("  <changefreq>{0}</changefreq>".Fmt(url.ChangeFrequency.Value.ToString().ToLower()));
+                        xml.AppendLine($"  <changefreq>{url.ChangeFrequency.Value.ToString().ToLower()}</changefreq>");
                     if (url.Priority != null)
-                        xml.AppendLine("  <priority>{0}</priority>".Fmt(url.Priority));
+                        xml.AppendLine($"  <priority>{url.Priority.Value.ToString(CultureInfo.InvariantCulture)}</priority>");
 
                     if (url.CustomXml != null)
                         xml.AppendLine(url.CustomXml);
@@ -218,15 +211,13 @@ namespace ServiceStack
                     xml.AppendLine("</url>");
                 }
 
-                if (feature.CustomXml != null)
-                {
-                    if (feature.CustomXml.UrlSetFooterXml != null)
-                        xml.AppendLine(feature.CustomXml.UrlSetFooterXml);
-                }
+                if (feature.CustomXml?.UrlSetFooterXml != null)
+                    xml.AppendLine(feature.CustomXml.UrlSetFooterXml);
 
                 xml.AppendLine("</urlset>");
 
-                httpRes.EndHttpHandlerRequest(skipClose: true, afterHeaders: r => r.Write(xml.ToString()));
+                var text = StringBuilderCache.ReturnAndFree(xml);
+                httpRes.EndHttpHandlerRequest(skipClose: true, afterHeaders: r => r.Write(text));
             }
         }
     }

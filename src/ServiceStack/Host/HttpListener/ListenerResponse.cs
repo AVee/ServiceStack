@@ -1,3 +1,5 @@
+#if !NETSTANDARD1_6
+
 //Copyright (c) Service Stack LLC. All Rights Reserved.
 //License: https://raw.github.com/ServiceStack/ServiceStack/master/license.txt
 
@@ -15,20 +17,17 @@ namespace ServiceStack.Host.HttpListener
     {
         private static readonly ILog Log = LogManager.GetLogger(typeof(ListenerResponse));
 
-        private readonly System.Net.HttpListenerResponse response;
+        private readonly HttpListenerResponse response;
 
         public ListenerResponse(HttpListenerResponse response, IRequest request = null)
         {
             this.response = response;
             this.Request = request;
-            this.Cookies = new Cookies(this);
+            this.Cookies = HostContext.AppHost.GetCookies(this);
             this.Items = new Dictionary<string, object>();
         }
 
-        public object OriginalResponse
-        {
-            get { return response; }
-        }
+        public object OriginalResponse => response;
 
         public IRequest Request { get; private set; }
 
@@ -55,16 +54,18 @@ namespace ServiceStack.Host.HttpListener
             response.AddHeader(name, value);
         }
 
+        public string GetHeader(string name)
+        {
+            return response.Headers[name];
+        }
+
         public void Redirect(string url)
         {
             response.Redirect(url);
         }
 
         public MemoryStream BufferedStream { get; set; }
-        public Stream OutputStream
-        {
-            get { return BufferedStream ?? response.OutputStream; }
-        }
+        public Stream OutputStream => BufferedStream ?? response.OutputStream;
 
         public bool UseBufferedStream
         {
@@ -84,7 +85,7 @@ namespace ServiceStack.Host.HttpListener
 
             var bytes = BufferedStream.ToArray();
             try {
-                SetContentLength(bytes.LongLength); //safe to set Length in Buffered Response
+                SetContentLength(bytes.Length); //safe to set Length in Buffered Response
             } catch {}
 
             response.OutputStream.Write(bytes, 0, bytes.Length);
@@ -167,6 +168,9 @@ namespace ServiceStack.Host.HttpListener
 
         public void SetCookie(Cookie cookie)
         {
+            if (!HostContext.AppHost.AllowSetCookie(Request, cookie.Name))
+                return;
+
             var cookieStr = cookie.AsHeaderValue();
             response.Headers.Add(HttpHeaders.SetCookie, cookieStr);            
         }
@@ -178,3 +182,5 @@ namespace ServiceStack.Host.HttpListener
     }
 
 }
+
+#endif

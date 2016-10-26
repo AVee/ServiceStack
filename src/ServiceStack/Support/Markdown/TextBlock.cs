@@ -222,7 +222,7 @@ namespace ServiceStack.Support.Markdown
 				if (staticValueFn != null)
 				{
 					var strValue = this.staticValueFn();
-					textWriter.Write(HttpUtility.HtmlEncode(strValue));
+					textWriter.Write(PclExportClient.Instance.HtmlEncode(strValue));
 				}
 				else
 				{
@@ -248,7 +248,7 @@ namespace ServiceStack.Support.Markdown
 					? Convert.ToString(memberExprValue)
 					: valueFn(memberExprValue);
 
-				textWriter.Write(HttpUtility.HtmlEncode(strValue));
+				textWriter.Write(PclExportClient.Instance.HtmlEncode(strValue));
 			}
 			catch (Exception ex)
 			{
@@ -263,7 +263,7 @@ namespace ServiceStack.Support.Markdown
 		{
 			this.Condition = condition;
 			this.Statement = statement;
-			this.ChildBlocks = new TemplateBlock[0];
+			this.ChildBlocks = TypeConstants<TemplateBlock>.EmptyArray;
 		}
 
 		public string Condition { get; set; }
@@ -349,9 +349,9 @@ namespace ServiceStack.Support.Markdown
 
 		public static string Extract(string content, List<StatementExprBlock> allStatements)
 		{
-			var sb = new StringBuilder();
+            var sb = StringBuilderCache.Allocate();
 
-			var initialCount = allStatements.Count;
+            var initialCount = allStatements.Count;
 			int pos;
 			var lastPos = 0;
 			while ((pos = content.IndexOf('@', lastPos)) != -1)
@@ -409,7 +409,7 @@ namespace ServiceStack.Support.Markdown
 				sb.Append(lastBlock);
 			}
 
-			return allStatements.Count > initialCount ? sb.ToString() : content;
+			return allStatements.Count > initialCount ? StringBuilderCache.ReturnAndFree(sb) : content;
 		}
 
 		protected void WriteStatement(MarkdownViewBase instance, TextWriter textWriter, Dictionary<string, object> scopeArgs)
@@ -422,13 +422,10 @@ namespace ServiceStack.Support.Markdown
 			else
 			{
 				//Buffer Markdown output before converting and writing HTML
-				var sb = new StringBuilder();
-				using (var sw = new StringWriter(sb))
-				{
-					WriteInternal(instance, sw, scopeArgs);
-				}
+			    var sw = StringWriterCacheAlt.Allocate();
+                WriteInternal(instance, sw, scopeArgs);
 
-				var markdown = sb.ToString();
+                var markdown = StringWriterCacheAlt.ReturnAndFree(sw);
 				var html = Transform(markdown);
 				textWriter.Write(html);
 			}
@@ -461,7 +458,7 @@ namespace ServiceStack.Support.Markdown
 					var genericDefinitionName = genericTypeName + "`" + genericArgNames.Length;
 					var genericDefinition = Type.GetType(genericDefinitionName);
 					var argTypes = genericArgNames.Select(AssemblyUtils.FindType).ToArray();
-					var concreteType = genericDefinition.MakeGenericType(argTypes);
+					var concreteType = genericDefinition.GetCachedGenericType(argTypes);
 					type = concreteType;
 				}
 				else
@@ -634,18 +631,15 @@ namespace ServiceStack.Support.Markdown
 			else
 			{
 				//Buffer Markdown output before converting and writing HTML
-				var sb = new StringBuilder();
-				using (var sw = new StringWriter(sb))
-				{
-					foreach (var item in memberExprEnumerator)
-					{
-						scopeArgs[this.EnumeratorName] = item;
-						base.Write(instance, sw, scopeArgs);
-					}
-				}
+			    var sw = StringWriterCacheAlt.Allocate();
+                foreach (var item in memberExprEnumerator)
+                {
+                    scopeArgs[this.EnumeratorName] = item;
+                    base.Write(instance, sw, scopeArgs);
+                }
 
-				var markdown = sb.ToString();
-				var renderedMarkup = Transform(markdown);
+			    var markdown = StringWriterCacheAlt.ReturnAndFree(sw);
+                var renderedMarkup = Transform(markdown);
 				textWriter.Write(renderedMarkup);
 			}
 		}
@@ -815,7 +809,7 @@ namespace ServiceStack.Support.Markdown
 		{
 			this.ReturnType = typeof(bool);
 			this.ElseStatement = elseStatement;
-			this.ElseChildBlocks = new TemplateBlock[0];
+			this.ElseChildBlocks = TypeConstants<TemplateBlock>.EmptyArray;
 		}
 
 		public TemplateBlock[] ElseChildBlocks { get; set; }
@@ -877,17 +871,14 @@ namespace ServiceStack.Support.Markdown
 			else
 			{
 				//Buffer Markdown output before converting and writing HTML
-				var sb = new StringBuilder();
-				using (var sw = new StringWriter(sb))
-				{
-					foreach (var templateBlock in ElseChildBlocks)
-					{
-						templateBlock.Write(instance, sw, scopeArgs);
-					}
-				}
+			    var sw = StringWriterCacheAlt.Allocate();
+                foreach (var templateBlock in ElseChildBlocks)
+                {
+                    templateBlock.Write(instance, sw, scopeArgs);
+                }
 
-				var markdown = sb.ToString();
-				var html = Transform(markdown);
+			    var markdown = StringWriterCacheAlt.ReturnAndFree(sw);
+                var html = Transform(markdown);
 				textWriter.Write(html);
 			}
 		}
@@ -928,12 +919,14 @@ namespace ServiceStack.Support.Markdown
 			var methodName = usesBaseType ? parts[0] : parts[1];
 
 			Type type = null;
-			if (typePropertyName == "Html")
+#if !NETSTANDARD1_6
+            if (typePropertyName == "Html")
 			{
                 type = markdownPage.ExecutionContext.BaseType.HasGenericType()
 					   ? typeof(HtmlHelper<>)
 					   : typeof(HtmlHelper);
 			}
+#endif
 			if (type == null)
 			{
 				type = usesBaseType
@@ -952,13 +945,14 @@ namespace ServiceStack.Support.Markdown
                     ? type.GetMethods(BindingFlags.Public | BindingFlags.Instance)
                         .FirstOrDefault(m => m.GetParameters().Length == 2 && m.Name == methodName)
                     : type.GetMethod(methodName, BindingFlags.Public | BindingFlags.Instance);
-
+#if !NETSTANDARD1_6
                 if (mi == null)
                 {
                     mi = HtmlHelper.GetMethod(methodName);
                     if (mi == null)
                         throw new ArgumentException("Unable to resolve method '" + methodExpr + "' on type " + type.GetOperationName());
                 }
+#endif
 
                 base.ReturnType = mi.ReturnType;
             }
@@ -994,7 +988,7 @@ namespace ServiceStack.Support.Markdown
 			}
 
 			if (!WriteRawHtml)
-				strResult = HttpUtility.HtmlEncode(strResult);
+				strResult = PclExportClient.Instance.HtmlEncode(strResult);
 
 			textWriter.Write(strResult);
 		}

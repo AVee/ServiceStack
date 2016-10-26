@@ -1,15 +1,16 @@
 ﻿using System;
 using System.Net;
-using System.Text;
 using System.Web;
+using ServiceStack.Text;
 using ServiceStack.Web;
 
 namespace ServiceStack.Host
 {
+#if !NETSTANDARD1_6
     public class Cookies : ICookies
     {
         readonly IHttpResponse httpRes;
-        private const string RootPath = "/";
+        public const string RootPath = "/";
 
         public Cookies(IHttpResponse httpRes)
         {
@@ -21,7 +22,8 @@ namespace ServiceStack.Host
         /// </summary>
         public void AddPermanentCookie(string cookieName, string cookieValue, bool? secureOnly = null)
         {
-            var cookie = new Cookie(cookieName, cookieValue, RootPath) {
+            var cookie = new Cookie(cookieName, cookieValue, RootPath)
+            {
                 Expires = DateTime.UtcNow.AddYears(20)
             };
             if (secureOnly != null)
@@ -49,27 +51,76 @@ namespace ServiceStack.Host
         /// </summary>
         public void DeleteCookie(string cookieName)
         {
-            var cookie = new Cookie(cookieName, string.Empty, "/") {
+            var cookie = new Cookie(cookieName, string.Empty, "/")
+            {
                 Expires = DateTime.UtcNow.AddDays(-1)
             };
             httpRes.SetCookie(cookie);
         }
     }
+#else
+    public class Cookies : ICookies
+    {
+        public const string RootPath = "/";
+        private readonly Microsoft.AspNetCore.Http.HttpResponse response;
+
+        public Cookies(IHttpResponse response)
+            : this((Microsoft.AspNetCore.Http.HttpResponse)response.OriginalResponse){}
+
+        public Cookies(Microsoft.AspNetCore.Http.HttpResponse response)
+        {
+            this.response = response;
+        }
+
+        public void DeleteCookie(string cookieName)
+        {
+            response.Cookies.Delete(cookieName);
+        }
+
+        public void AddPermanentCookie(string cookieName, string cookieValue, bool? secureOnly = null)
+        {
+            var options = new Microsoft.AspNetCore.Http.CookieOptions
+            {
+                Path = RootPath,
+                Expires = DateTime.UtcNow.AddYears(20)
+            };
+            if (secureOnly != null)
+            {
+                options.Secure = secureOnly.Value;
+            }
+            response.Cookies.Append(cookieName, cookieValue, options);
+        }
+
+        public void AddSessionCookie(string cookieName, string cookieValue, bool? secureOnly = null)
+        {
+            var options = new Microsoft.AspNetCore.Http.CookieOptions
+            {
+                Path = RootPath,
+            };
+            if (secureOnly != null)
+            {
+                options.Secure = secureOnly.Value;
+            }
+            response.Cookies.Append(cookieName, cookieValue, options);
+        }
+    }
+#endif
 
     public static class CookiesExtensions
     {
         private static readonly DateTime Session = DateTime.MinValue;
 
+#if !NETSTANDARD1_6
         public static HttpCookie ToHttpCookie(this Cookie cookie)
         {
             var httpCookie = new HttpCookie(cookie.Name, cookie.Value)
-                {
-                    Path = cookie.Path,
-                    Expires = cookie.Expires,
-                    HttpOnly = !HostContext.Config.AllowNonHttpOnlyCookies || cookie.HttpOnly,
-                    Secure = cookie.Secure
-                };
-            if (!String.IsNullOrEmpty(cookie.Domain))
+            {
+                Path = cookie.Path,
+                Expires = cookie.Expires,
+                HttpOnly = !HostContext.Config.AllowNonHttpOnlyCookies || cookie.HttpOnly,
+                Secure = cookie.Secure
+            };
+            if (!string.IsNullOrEmpty(cookie.Domain))
             {
                 httpCookie.Domain = cookie.Domain;
             }
@@ -79,6 +130,7 @@ namespace ServiceStack.Host
             }
             return httpCookie;
         }
+#endif
 
         public static string AsHeaderValue(this Cookie cookie)
         {
@@ -86,22 +138,22 @@ namespace ServiceStack.Host
                 ? "/"
                 : cookie.Path ?? "/";
 
-            var sb = new StringBuilder();
+            var sb = StringBuilderCache.Allocate();
 
-            sb.AppendFormat("{0}={1};path={2}", cookie.Name, cookie.Value, path);
+            sb.Append($"{cookie.Name}={cookie.Value};path={path}");
 
             if (cookie.Expires != Session)
             {
-                sb.AppendFormat(";expires={0}", cookie.Expires.ToString("R"));
+                sb.Append($";expires={cookie.Expires:R}");
             }
 
-            if (!String.IsNullOrEmpty(cookie.Domain))
+            if (!string.IsNullOrEmpty(cookie.Domain))
             {
-                sb.AppendFormat(";domain={0}", cookie.Domain);
+                sb.Append($";domain={cookie.Domain}");
             }
             else if (HostContext.Config.RestrictAllCookiesToDomain != null)
             {
-                sb.AppendFormat(";domain={0}", HostContext.Config.RestrictAllCookiesToDomain);
+                sb.Append($";domain={HostContext.Config.RestrictAllCookiesToDomain}");
             }
 
             if (cookie.Secure)
@@ -113,7 +165,7 @@ namespace ServiceStack.Host
                 sb.Append(";HttpOnly");
             }
 
-            return sb.ToString();
+            return StringBuilderCache.ReturnAndFree(sb);
         }
     }
 }

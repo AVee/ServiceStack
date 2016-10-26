@@ -302,7 +302,7 @@ namespace ServiceStack.WebHost.Endpoints.Tests
         private readonly Action<Container> configureFn;
 
         public AuthAppHost(string webHostUrl, Action<Container> configureFn = null)
-            : base("Validation Tests", typeof(CustomerService).Assembly)
+            : base("Validation Tests", typeof(CustomerService).GetAssembly())
         {
             this.webHostUrl = webHostUrl;
             this.configureFn = configureFn;
@@ -316,7 +316,9 @@ namespace ServiceStack.WebHost.Endpoints.Tests
 
             Plugins.Add(new AuthFeature(() => new CustomUserSession(),
                 GetAuthProviders(), "~/" + AuthTests.LoginUrl)
-            { RegisterPlugins = { new WebSudoFeature() } });
+            {
+                RegisterPlugins = { new WebSudoFeature() }
+            });
 
             container.Register(new MemoryCacheClient());
             userRep = new InMemoryAuthRepository();
@@ -559,16 +561,8 @@ namespace ServiceStack.WebHost.Endpoints.Tests
             {
                 var client = (ServiceClientBase)GetClientWithUserPassword();
                 client.AlwaysSendBasicAuthHeader = true;
-                client.RequestFilter = req =>
-                {
-                    bool hasAuthentication = false;
-                    foreach (var key in req.Headers.Keys)
-                    {
-                        if (key.ToString() == "Authorization")
-                            hasAuthentication = true;
-                    }
-                    Assert.IsTrue(hasAuthentication);
-                };
+                client.RequestFilter = req => 
+                    Assert.That(req.Headers[HttpHeaders.Authorization], Is.Not.Null);
 
                 var request = new Secured { Name = "test" };
                 var response = client.Send<SecureResponse>(request);
@@ -577,6 +571,31 @@ namespace ServiceStack.WebHost.Endpoints.Tests
             catch (WebServiceException webEx)
             {
                 Assert.Fail(webEx.Message);
+            }
+        }
+
+        [Test]
+        public void Authenticating_once_with_BasicAuth_does_not_establish_auth_session()
+        {
+            var client = (ServiceClientBase)GetClientWithUserPassword();
+            client.AlwaysSendBasicAuthHeader = true;
+            client.RequestFilter = req =>
+                Assert.That(req.Headers[HttpHeaders.Authorization], Is.Not.Null);
+
+            var request = new Secured { Name = "test" };
+            var response = client.Send<SecureResponse>(request);
+            Assert.That(response.Result, Is.EqualTo(request.Name));
+
+            var nonBasicAuthClient = GetClient();
+            nonBasicAuthClient.SetSessionId(client.GetSessionId());
+            try
+            {
+                response = nonBasicAuthClient.Send<SecureResponse>(request);
+                Assert.Fail("Should throw");
+            }
+            catch (WebServiceException webEx)
+            {
+                Assert.That(webEx.StatusCode, Is.EqualTo((int)HttpStatusCode.Unauthorized));
             }
         }
 
@@ -640,7 +659,7 @@ namespace ServiceStack.WebHost.Endpoints.Tests
             var client = GetClient();
 
             var request = new Secured { Name = "test" };
-            var authResponse = await client.SendAsync<AuthenticateResponse>(
+            var authResponse = await client.SendAsync(
                 new Authenticate
                 {
                     provider = CredentialsAuthProvider.Name,
@@ -927,6 +946,9 @@ namespace ServiceStack.WebHost.Endpoints.Tests
         }
 
         [Test]
+#if NETCORE
+        [Ignore("AllowAutoRedirect=false is not implemented in .NET Core")]
+#endif
         public void Html_clients_receive_redirect_to_login_page_when_accessing_unauthenticated()
         {
             var client = (ServiceClientBase)GetHtmlClient();
@@ -946,6 +968,9 @@ namespace ServiceStack.WebHost.Endpoints.Tests
         }
 
         [Test]
+#if NETCORE
+        [Ignore("AllowAutoRedirect=false is not implemented in .NET Core")]
+#endif
         public void Html_clients_receive_secured_url_attempt_in_login_page_redirect_query_string()
         {
             var client = (ServiceClientBase)GetHtmlClient();
@@ -975,6 +1000,9 @@ namespace ServiceStack.WebHost.Endpoints.Tests
         }
 
         [Test]
+#if NETCORE
+        [Ignore("AllowAutoRedirect=false is not implemented in .NET Core")]
+#endif
         public void Html_clients_receive_secured_url_including_query_string_within_login_page_redirect_query_string()
         {
             var client = (ServiceClientBase)GetHtmlClient();
@@ -1002,6 +1030,9 @@ namespace ServiceStack.WebHost.Endpoints.Tests
         }
 
         [Test]
+#if NETCORE
+        [Ignore("AllowAutoRedirect=false is not implemented in .NET Core")]
+#endif
         public void Html_clients_receive_session_ReferrerUrl_on_successful_authentication()
         {
             var client = (ServiceClientBase)GetHtmlClient();
@@ -1219,10 +1250,10 @@ namespace ServiceStack.WebHost.Endpoints.Tests
         }
 
 
-        [TestCase(ExpectedException = typeof(AuthenticationException))]
+        [Test]
         public void Meaningful_Exception_for_Unknown_Auth_Header()
         {
-            var authInfo = new AuthenticationInfo("Negotiate,NTLM");
+            Assert.Throws<AuthenticationException>(() => new AuthenticationInfo("Negotiate,NTLM"));
         }
 
         [Test]

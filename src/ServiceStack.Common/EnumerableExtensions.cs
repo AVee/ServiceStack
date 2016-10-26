@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 
 namespace ServiceStack
@@ -93,6 +94,35 @@ namespace ServiceStack
                 if (!Equals(value, default(T))) return value;
             }
             return default(T);
+        }
+
+        public static bool EquivalentTo(this byte[] bytes, byte[] other)
+        {
+            var compare = 0;
+            for (var i = 0; i < other.Length; i++)
+                compare |= other[i] ^ bytes[i];
+
+            return compare == 0;
+        }
+
+        public static bool EquivalentTo<T>(this T[] array, T[] otherArray, Func<T, T, bool> comparer = null)
+        {
+            if (array == null || otherArray == null)
+                return array == otherArray;
+
+            if (array.Length != otherArray.Length)
+                return false;
+
+            if (comparer == null)
+                comparer = (v1, v2) => v1.Equals(v2);
+
+            for (var i = 0; i < array.Length; i++)
+            {
+                if (!comparer(array[i], otherArray[i]))
+                    return false;
+            }
+
+            return true;
         }
 
         public static bool EquivalentTo<T>(this IEnumerable<T> thisList, IEnumerable<T> otherList, Func<T, T, bool> comparer = null)
@@ -199,7 +229,12 @@ namespace ServiceStack
         /// </summary>
         public static IEnumerable<T> Safe<T>(this IEnumerable<T> enumerable)
         {
-            return enumerable ?? new T[0];
+            return enumerable ?? TypeConstants<T>.EmptyArray;
+        }
+
+        public static IEnumerable Safe(this IEnumerable enumerable)
+        {
+            return enumerable ?? TypeConstants.EmptyObjectArray;
         }
     }
 }

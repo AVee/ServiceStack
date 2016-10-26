@@ -1,12 +1,15 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using Check.ServiceInterface;
 using Check.ServiceModel;
 using Check.ServiceModel.Types;
 using Funq;
 using ServiceStack;
+using ServiceStack.Admin;
 using ServiceStack.Api.Swagger;
+using ServiceStack.Auth;
 using ServiceStack.Data;
 using ServiceStack.Html;
 using ServiceStack.IO;
@@ -36,12 +39,16 @@ namespace CheckWeb
         {
             var nativeTypes = this.GetPlugin<NativeTypesFeature>();
             nativeTypes.MetadataTypesConfig.ExportTypes.Add(typeof(DayOfWeek));
+            nativeTypes.MetadataTypesConfig.IgnoreTypes.Add(typeof(IgnoreInMetadataConfig));
+            nativeTypes.InitializeCollectionsForType = NativeTypesFeature.DontInitializeAutoQueryCollections;
+            //nativeTypes.MetadataTypesConfig.GlobalNamespace = "Check.ServiceInterface";
 
             // Change ServiceStack configuration
             this.SetConfig(new HostConfig
             {
                 //UseHttpsLinks = true,
                 AppendUtf8CharsetOnContentTypes = new HashSet<string> { MimeTypes.Html },
+                //AllowJsConfig = false,
 
                 // Set to return JSON if no request content type is defined
                 // e.g. text/html or application/json
@@ -60,6 +67,56 @@ namespace CheckWeb
                     CaptureSynchronizationContext = true,
                 });
 
+            Plugins.Add(new AutoQueryFeature { MaxLimit = 100 });
+
+            Plugins.Add(new AutoQueryDataFeature()
+                .AddDataSource(ctx => ctx.MemorySource(GetRockstars())));
+
+            Plugins.Add(new AdminFeature());
+
+            Plugins.Add(new PostmanFeature());
+            Plugins.Add(new CorsFeature(allowedMethods: "GET, POST, PUT, DELETE, PATCH, OPTIONS"));
+
+            Plugins.Add(new RequestLogsFeature {
+                RequestLogger = new CsvRequestLogger(),
+            });
+
+            Plugins.Add(new DynamicallyRegisteredPlugin());
+
+            container.Register<IDbConnectionFactory>(
+                new OrmLiteConnectionFactory(":memory:", SqliteDialect.Provider));
+
+            using (var db = container.Resolve<IDbConnectionFactory>().Open())
+            {
+                db.DropAndCreateTable<Rockstar>();
+                db.InsertAll(GetRockstars());
+            }
+
+            var dbFactory = (OrmLiteConnectionFactory)container.Resolve<IDbConnectionFactory>();
+
+            dbFactory.RegisterConnection("SqlServer", 
+                new OrmLiteConnectionFactory(
+                    "Server=localhost;Database=test;User Id=test;Password=test;",
+                    SqlServerDialect.Provider) {
+                        ConnectionFilter = x => new ProfiledDbConnection(x, Profiler.Current)
+                    });
+
+            dbFactory.RegisterConnection("pgsql",
+                new OrmLiteConnectionFactory(
+                    "Server=localhost;Port=5432;User Id=test;Password=test;Database=test;Pooling=true;MinPoolSize=0;MaxPoolSize=200",
+                    PostgreSqlDialect.Provider));
+
+            using (var db = dbFactory.OpenDbConnection("pgsql"))
+            {
+                db.DropAndCreateTable<Rockstar>();
+                db.DropAndCreateTable<PgRockstar>();
+
+                db.Insert(new Rockstar { Id = 1, FirstName = "PostgreSQL", LastName = "Connection", Age = 1 });
+                db.Insert(new PgRockstar { Id = 1, FirstName = "PostgreSQL", LastName = "Named Connection", Age = 1 });
+            }
+
+            this.GlobalHtmlErrorHttpHandler = new RazorHandler("GlobalErrorHandler.cshtml");
+
             // Configure JSON serialization properties.
             this.ConfigureSerialization(container);
 
@@ -74,45 +131,21 @@ namespace CheckWeb
 
             // Configure ServiceStack Razor views.
             this.ConfigureView(container);
-
-            Plugins.Add(new AutoQueryFeature());
-            Plugins.Add(new PostmanFeature());
-            Plugins.Add(new CorsFeature(allowedMethods: "GET, POST, PUT, DELETE, PATCH, OPTIONS"));
-
-            container.Register<IDbConnectionFactory>(
-                new OrmLiteConnectionFactory(":memory:", SqliteDialect.Provider));
-
-            using (var db = container.Resolve<IDbConnectionFactory>().Open())
-            {
-                db.DropAndCreateTable<Rockstar>();
-                db.InsertAll(SeedRockstars);
-            }
-
-            var dbFactory = (OrmLiteConnectionFactory)container.Resolve<IDbConnectionFactory>();
-
-            dbFactory.RegisterConnection("SqlServer", 
-                new OrmLiteConnectionFactory(
-                    "Server=localhost;Database=test;User Id=test;Password=test;",
-                    SqlServerDialect.Provider) {
-                        ConnectionFilter = x => new ProfiledDbConnection(x, Profiler.Current)
-                    });
-
-
-            this.GlobalHtmlErrorHttpHandler = new RazorHandler("GlobalErrorHandler.cshtml");
-
-            //JavaGenerator.AddGsonImport = true;
         }
 
-        public static Rockstar[] SeedRockstars = new[] {
-            new Rockstar { Id = 1, FirstName = "Jimi", LastName = "Hendrix", Age = 27 },
-            new Rockstar { Id = 2, FirstName = "Jim", LastName = "Morrison", Age = 27 },
-            new Rockstar { Id = 3, FirstName = "Kurt", LastName = "Cobain", Age = 27 },
-            new Rockstar { Id = 4, FirstName = "Elvis", LastName = "Presley", Age = 42 },
-            new Rockstar { Id = 5, FirstName = "David", LastName = "Grohl", Age = 44 },
-            new Rockstar { Id = 6, FirstName = "Eddie", LastName = "Vedder", Age = 48 },
-            new Rockstar { Id = 7, FirstName = "Michael", LastName = "Jackson", Age = 50 },
-        };
-
+        public static Rockstar[] GetRockstars()
+        {
+            return new[]
+            {
+                new Rockstar {Id = 1, FirstName = "Jimi", LastName = "Hendrix", Age = 27},
+                new Rockstar {Id = 2, FirstName = "Jim", LastName = "Morrison", Age = 27},
+                new Rockstar {Id = 3, FirstName = "Kurt", LastName = "Cobain", Age = 27},
+                new Rockstar {Id = 4, FirstName = "Elvis", LastName = "Presley", Age = 42},
+                new Rockstar {Id = 5, FirstName = "David", LastName = "Grohl", Age = 44},
+                new Rockstar {Id = 6, FirstName = "Eddie", LastName = "Vedder", Age = 48},
+                new Rockstar {Id = 7, FirstName = "Michael", LastName = "Jackson", Age = 50},
+            };
+        }
 
         /// <summary>
         /// Configure JSON serialization properties.
@@ -146,7 +179,21 @@ namespace CheckWeb
         /// <param name="container">The container.</param>
         private void ConfigureAuth(Container container)
         {
-            // ...
+            Plugins.Add(new AuthFeature(() => new AuthUserSession(), 
+                new IAuthProvider[]
+                {
+                    new BasicAuthProvider(AppSettings), 
+                    new ApiKeyAuthProvider(AppSettings), 
+                })
+            {
+                ServiceRoutes = new Dictionary<Type, string[]> {
+                  { typeof(AuthenticateService), new[] { "/api/auth", "/api/auth/{provider}" } },
+                }
+            });
+
+            var authRepo = new OrmLiteAuthRepository(container.Resolve<IDbConnectionFactory>());
+            container.Register<IAuthRepository>(c => authRepo);
+            authRepo.InitSchema();
         }
 
         /// <summary>
@@ -168,11 +215,9 @@ namespace CheckWeb
         private void ConfigureView(Container container)
         {
             // Enable ServiceStack Razor
-            Plugins.Add(new RazorFormat
-            {
-                //MinifyHtml = true,
-                //UseAdvancedCompression = true,
-            });
+            var razor = new RazorFormat();
+            razor.Deny.RemoveAt(0);
+            Plugins.Add(razor);
 
             // Enable support for Swagger API browser
             Plugins.Add(new SwaggerFeature

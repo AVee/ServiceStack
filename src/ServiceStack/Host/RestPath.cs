@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using System.Text;
 using ServiceStack.Serialization;
 using ServiceStack.Text;
 using ServiceStack.Web;
@@ -19,18 +18,15 @@ namespace ServiceStack.Host
         private const char ComponentSeperator = '.';
         private const string VariablePrefix = "{";
 
-        readonly bool[] componentsWithSeparators = new bool[0];
+        private readonly bool[] componentsWithSeparators;
 
-        private readonly string restPath;
-        private readonly string allowedVerbs;
-        private readonly bool allowsAllVerbs;
         public bool IsWildCardPath { get; private set; }
 
-        private readonly string[] literalsToMatch = new string[0];
+        private readonly string[] literalsToMatch;
 
-        private readonly string[] variablesNames = new string[0];
+        private readonly string[] variablesNames;
 
-        private readonly bool[] isWildcard = new bool[0];
+        private readonly bool[] isWildcard;
         private readonly int wildcardCount = 0;
 
         public int VariableArgsCount { get; set; }
@@ -47,27 +43,21 @@ namespace ServiceStack.Host
         /// </summary>
         public int TotalComponentsCount { get; set; }
 
-        public string[] Verbs
-        {
-            get 
-            { 
-                return allowsAllVerbs 
-                    ? new[] { ActionContext.AnyAction } 
-                    : AllowedVerbs.Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries); 
-            }
-        }
+        public string[] Verbs => AllowsAllVerbs 
+            ? new[] { ActionContext.AnyAction } 
+            : AllowedVerbs.Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries);
 
-        public Type RequestType { get; private set; }
+        public Type RequestType { get; }
 
-        public string Path { get { return this.restPath; } }
+        public string Path { get; }
 
         public string Summary { get; private set; }
 
         public string Notes { get; private set; }
 
-        public bool AllowsAllVerbs { get { return this.allowsAllVerbs; } }
+        public bool AllowsAllVerbs { get; }
 
-        public string AllowedVerbs { get { return this.allowedVerbs; } }
+        public string AllowedVerbs { get; }
 
         public int Priority { get; set; } //passed back to RouteAttribute
 
@@ -107,7 +97,7 @@ namespace ServiceStack.Host
 
         public RestRoute ToRestRoute()
         {
-            return new RestRoute(RequestType, restPath, allowedVerbs, 0);
+            return new RestRoute(RequestType, Path, AllowedVerbs, 0);
         }
 
         public RestPath(Type requestType, string path) : this(requestType, path, null) { }
@@ -117,19 +107,19 @@ namespace ServiceStack.Host
             this.RequestType = requestType;
             this.Summary = summary;
             this.Notes = notes;
-            this.restPath = path;
+            this.Path = path;
 
-            this.allowsAllVerbs = verbs == null || verbs == WildCard;
-            if (!this.allowsAllVerbs)
+            this.AllowsAllVerbs = verbs == null || verbs == WildCard;
+            if (!this.AllowsAllVerbs)
             {
-                this.allowedVerbs = verbs.ToUpper();
+                this.AllowedVerbs = verbs?.ToUpper();
             }
 
             var componentsList = new List<string>();
 
             //We only split on '.' if the restPath has them. Allows for /{action}.{type}
             var hasSeparators = new List<bool>();
-            foreach (var component in this.restPath.Split(PathSeperatorChar))
+            foreach (var component in this.Path.Split(PathSeperatorChar))
             {
                 if (string.IsNullOrEmpty(component)) continue;
 
@@ -156,7 +146,7 @@ namespace ServiceStack.Host
             this.PathComponentsCount = this.componentsWithSeparators.Length;
             string firstLiteralMatch = null;
 
-            var sbHashKey = new StringBuilder();
+            var sbHashKey = StringBuilderCache.Allocate();
             for (var i = 0; i < components.Length; i++)
             {
                 var component = components[i];
@@ -202,7 +192,7 @@ namespace ServiceStack.Host
                 : WildCardChar + PathSeperator + firstLiteralMatch;
 
             this.IsValid = sbHashKey.Length > 0;
-            this.UniqueMatchHashKey = sbHashKey.ToString();
+            this.UniqueMatchHashKey = StringBuilderCache.ReturnAndFree(sbHashKey);
 
             this.typeDeserializer = new StringMapTypeDeserializer(this.RequestType);
             RegisterCaseInsenstivePropertyNameMappings();
@@ -241,7 +231,7 @@ namespace ServiceStack.Host
         /// </summary>
         public string FirstMatchHashKey { get; private set; }
 
-        public string UniqueMatchHashKey { get; private set; }
+        public string UniqueMatchHashKey { get; }
 
         private readonly StringMapTypeDeserializer typeDeserializer;
 
@@ -299,7 +289,7 @@ namespace ServiceStack.Host
             wildcardMatchCount = 0;
 
             if (withPathInfoParts.Length != this.PathComponentsCount && !this.IsWildCardPath) return false;
-            if (!this.allowsAllVerbs && !this.allowedVerbs.Contains(httpMethod.ToUpper())) return false;
+            if (!this.AllowsAllVerbs && !this.AllowedVerbs.Contains(httpMethod.ToUpper())) return false;
 
             if (!ExplodeComponents(ref withPathInfoParts)) return false;
             if (this.TotalComponentsCount != withPathInfoParts.Length && !this.IsWildCardPath) return false;
@@ -392,9 +382,7 @@ namespace ServiceStack.Host
                     && requestComponents.Length >= this.TotalComponentsCount - this.wildcardCount;
 
                 if (!isValidWildCardPath)
-                    throw new ArgumentException(string.Format(
-                        "Path Mismatch: Request Path '{0}' has invalid number of components compared to: '{1}'",
-                        pathInfo, this.restPath));
+                    throw new ArgumentException($"Path Mismatch: Request Path '{pathInfo}' has invalid number of components compared to: '{this.Path}'");
             }
 
             var requestKeyValuesMap = new Dictionary<string, string>();
@@ -427,12 +415,13 @@ namespace ServiceStack.Host
                     if (i == this.TotalComponentsCount - 1)
                     {
                         // Wildcard at end of path definition consumes all the rest
-                        var sb = new StringBuilder(value);
+                        var sb = StringBuilderCache.Allocate();
+                        sb.Append(value);
                         for (var j = pathIx + 1; j < requestComponents.Length; j++)
                         {
                             sb.Append(PathSeperatorChar + requestComponents[j]);
                         }
-                        value = sb.ToString();
+                        value = StringBuilderCache.ReturnAndFree(sb);
                     }
                     else
                     {
@@ -440,15 +429,16 @@ namespace ServiceStack.Host
                         // hits a match for the next element in the definition (which must be a literal)
                         // It may consume 0 or more path parts
                         var stopLiteral = i == this.TotalComponentsCount - 1 ? null : this.literalsToMatch[i + 1];
-                        if (requestComponents[pathIx] != stopLiteral)
+                        if (!string.Equals(requestComponents[pathIx], stopLiteral, StringComparison.OrdinalIgnoreCase))
                         {
-                            var sb = new StringBuilder(value);
+                            var sb = StringBuilderCache.Allocate();
+                            sb.Append(value);
                             pathIx++;
-                            while (requestComponents[pathIx] != stopLiteral)
+                            while (!string.Equals(requestComponents[pathIx], stopLiteral, StringComparison.OrdinalIgnoreCase))
                             {
                                 sb.Append(PathSeperatorChar + requestComponents[pathIx++]);
                             }
-                            value = sb.ToString();
+                            value = StringBuilderCache.ReturnAndFree(sb);
                         }
                         else
                         {

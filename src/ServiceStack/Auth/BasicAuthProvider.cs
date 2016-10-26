@@ -33,20 +33,22 @@ namespace ServiceStack.Auth
 
         public void PreAuthenticate(IRequest req, IResponse res)
         {
-            //Need to run SessionFeature filter since its not executed before this attribute (Priority -100)			
-            SessionFeature.AddSessionIdToRequestFilter(req, res, null); //Required to get req.GetSessionId()
-
+            //API Keys are sent in Basic Auth Username and Password is Empty
             var userPass = req.GetBasicAuthUserAndPassword();
-            if (userPass != null)
+            if (!string.IsNullOrEmpty(userPass?.Value))
             {
-                var authService = req.TryResolve<AuthenticateService>();
-                authService.Request = req;
-                var response = authService.Post(new Authenticate
+                //Need to run SessionFeature filter since its not executed before this attribute (Priority -100)			
+                SessionFeature.AddSessionIdToRequestFilter(req, res, null); //Required to get req.GetSessionId()
+
+                using (var authService = HostContext.ResolveService<AuthenticateService>(req))
                 {
-                    provider = Name,
-                    UserName = userPass.Value.Key,
-                    Password = userPass.Value.Value
-                });
+                    var response = authService.Post(new Authenticate
+                    {
+                        provider = Name,
+                        UserName = userPass.Value.Key,
+                        Password = userPass.Value.Value
+                    });
+                }
             }
         }
     }

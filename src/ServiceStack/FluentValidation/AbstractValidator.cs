@@ -61,8 +61,12 @@ namespace ServiceStack.FluentValidation
         ValidationResult IValidator.Validate(ValidationContext context) {
             context.Guard("Cannot pass null to Validate");
 
+            if (Request == null)
+                Request = context.Request;
+
             var newContext = new ValidationContext<T>((T)context.InstanceToValidate, context.PropertyChain, context.Selector) {
-                IsChildContext = context.IsChildContext
+                IsChildContext = context.IsChildContext,
+                Request = context.Request
             };
 
             return Validate(newContext);
@@ -74,7 +78,9 @@ namespace ServiceStack.FluentValidation
         /// <param name="instance">The object to validate</param>
         /// <returns>A ValidationResult object containing any validation failures</returns>
         public virtual ValidationResult Validate(T instance) {
-            return Validate(new ValidationContext<T>(instance, new PropertyChain(), new DefaultValidatorSelector()));
+            return Validate(new ValidationContext<T>(instance, new PropertyChain(), new DefaultValidatorSelector()) {
+                Request = Request
+            });
         }
         
         /// <summary>
@@ -84,8 +90,12 @@ namespace ServiceStack.FluentValidation
         /// <returns>A ValidationResult object containing any validation failures.</returns>
         public virtual ValidationResult Validate(ValidationContext<T> context) {
             context.Guard("Cannot pass null to Validate");
+
+            if (Request == null)
+                Request = context.Request;
+
             var failures = nestedValidators.SelectMany(x => x.Validate(context)).ToList();
-            return new ValidationResult(failures);
+            return new ValidationResult(failures) { Request = Request };
         }
 
         /// <summary>
@@ -104,7 +114,7 @@ namespace ServiceStack.FluentValidation
         }
 
         bool IValidator.CanValidateInstancesOfType(Type type) {
-            return typeof(T).IsAssignableFrom(type);
+            return typeof(T).IsAssignableFromType(type);
         }
 
         /// <summary>

@@ -45,7 +45,7 @@ namespace ServiceStack
         /// <summary>
         /// Called before request resend, when the initial request required authentication
         /// </summary>
-        public Action<WebRequest> OnAuthenticationRequired { get; set; }
+        public Action OnAuthenticationRequired { get; set; }
 
         public static int BufferSize = 8192;
 
@@ -82,6 +82,11 @@ namespace ServiceStack
         /// </summary>
         public ResultsFilterResponseDelegate ResultsFilterResponse { get; set; }
 
+        /// <summary>
+        /// Called with requestUri, ResponseType when server returns 304 NotModified
+        /// </summary>
+        public ExceptionFilterDelegate ExceptionFilter { get; set; }
+
         public string BaseUri { get; set; }
         public bool DisableAutoCompression { get; set; }
 
@@ -94,6 +99,8 @@ namespace ServiceStack
             this.UserName = userName;
             this.Password = password;
         }
+
+        public string BearerToken { get; set; }
 
         public TimeSpan? Timeout { get; set; }
 
@@ -122,6 +129,8 @@ namespace ServiceStack
 
         internal Action CancelAsyncFn;
 
+        public static bool DisableTimer { get; set; }
+
         public void CancelAsync()
         {
             if (CancelAsyncFn != null)
@@ -133,7 +142,7 @@ namespace ServiceStack
             }
         }
 
-        public Task<TResponse> SendAsync<TResponse>(string httpMethod, string absoluteUrl, object request)
+        public Task<TResponse> SendAsync<TResponse>(string httpMethod, string absoluteUrl, object request, CancellationToken token=default(CancellationToken))
         {
             var tcs = new TaskCompletionSource<TResponse>();
 
@@ -151,7 +160,7 @@ namespace ServiceStack
             {
                 WebResponse webRes = null;
 
-                SendWebRequest<TResponse>(httpMethod, absoluteUrl, request,
+                SendWebRequest<TResponse>(httpMethod, absoluteUrl, request, token,
                     r => {
                         ResultsFilterResponse(webRes, r, httpMethod, absoluteUrl, request);
                         tcs.SetResult(r);
@@ -162,7 +171,7 @@ namespace ServiceStack
             }
             else
             {
-                SendWebRequest<TResponse>(httpMethod, absoluteUrl, request,
+                SendWebRequest<TResponse>(httpMethod, absoluteUrl, request, token,
                     tcs.SetResult,
                     (response, exc) => tcs.SetException(exc)
                 );
@@ -171,16 +180,10 @@ namespace ServiceStack
             return tcs.Task;
         }
 
-        public void SendAsync<TResponse>(string httpMethod, string absoluteUrl, object request,
-            Action<TResponse> onSuccess, Action<object, Exception> onError)
-        {
-            SendWebRequest(httpMethod, absoluteUrl, request, onSuccess, onError);
-        }
-
-        private void SendWebRequest<TResponse>(string httpMethod, string absoluteUrl, object request, 
+        private void SendWebRequest<TResponse>(string httpMethod, string absoluteUrl, object request, CancellationToken token, 
             Action<TResponse> onSuccess, Action<object, Exception> onError, Action<WebResponse> onResponseInit = null)
         {
-            if (httpMethod == null) throw new ArgumentNullException("httpMethod");
+            if (httpMethod == null) throw new ArgumentNullException(nameof(httpMethod));
 
             this.PopulateRequestMetadata(request);
 
@@ -203,13 +206,15 @@ namespace ServiceStack
                 Url = requestUri,
                 WebRequest = webRequest,
                 Request = request,
+                Token = token,
                 OnResponseInit = onResponseInit,
                 OnSuccess = onSuccess,
                 OnError = onError,
                 UseSynchronizationContext = CaptureSynchronizationContext ? SynchronizationContext.Current : null,
                 HandleCallbackOnUIThread = HandleCallbackOnUiThread,
             };
-            requestState.StartTimer(this.Timeout.GetValueOrDefault(DefaultTimeout));
+            if (!DisableTimer)
+                requestState.StartTimer(this.Timeout.GetValueOrDefault(DefaultTimeout));
 
             SendWebRequestAsync(httpMethod, request, requestState, webRequest);
         }
@@ -234,11 +239,12 @@ namespace ServiceStack
             //EmulateHttpViaPost is also forced for SL5 clients sending non GET/POST requests
             PclExport.Instance.Config(client, userAgent: UserAgent);
 
-            if (this.Credentials != null) 
-                client.Credentials = this.Credentials;
-
-            if (this.authInfo != null)
+            if (this.authInfo != null && !string.IsNullOrEmpty(this.UserName))
                 client.AddAuthInfo(this.UserName, this.Password, authInfo);
+            else if (this.BearerToken != null)
+                client.Headers[HttpHeaders.Authorization] = "Bearer " + this.BearerToken;
+            else if (this.Credentials != null)
+                client.Credentials = this.Credentials;
             else if (this.AlwaysSendBasicAuthHeader)
                 client.AddBasicAuth(this.UserName, this.Password);
 
@@ -268,6 +274,8 @@ namespace ServiceStack
             var requestState = (AsyncState<T>)asyncResult.AsyncState;
             try
             {
+                requestState.Token.ThrowIfCancellationRequested();
+
                 var req = requestState.WebRequest;
 
                 var stream = req.EndGetRequestStream(asyncResult);
@@ -277,7 +285,7 @@ namespace ServiceStack
                     StreamSerializer(null, requestState.Request, stream);
                 }
 
-                stream.EndWriteStream();
+                PclExportClient.Instance.CloseWriteStream(stream);
 
                 requestState.WebRequest.BeginGetResponse(ResponseCallback<T>, requestState);
             }
@@ -292,14 +300,13 @@ namespace ServiceStack
             var requestState = (AsyncState<T>)asyncResult.AsyncState;
             try
             {
+                requestState.Token.ThrowIfCancellationRequested();
+
                 var webRequest = requestState.WebRequest;
 
                 requestState.WebResponse = (HttpWebResponse)webRequest.EndGetResponse(asyncResult);
 
-                if (requestState.OnResponseInit != null)
-                {
-                    requestState.OnResponseInit(requestState.WebResponse);
-                }
+                requestState.OnResponseInit?.Invoke(requestState.WebResponse);
 
                 if (requestState.ResponseContentLength == default(long))
                 {
@@ -323,20 +330,24 @@ namespace ServiceStack
             }
             catch (Exception ex)
             {
+                var webEx = ex as WebException;
                 var firstCall = Interlocked.Increment(ref requestState.RequestCount) == 1;
-                if (firstCall && WebRequestUtils.ShouldAuthenticate(ex, this.UserName, this.Password))
+                if (firstCall && WebRequestUtils.ShouldAuthenticate(webEx,
+                    (!string.IsNullOrEmpty(UserName) && !string.IsNullOrEmpty(Password))
+                        || Credentials != null
+                        || BearerToken != null
+                        || OnAuthenticationRequired != null))
                 {
                     try
                     {
+                        OnAuthenticationRequired?.Invoke();
+
                         requestState.WebRequest = (HttpWebRequest)WebRequest.Create(requestState.Url);
 
                         if (StoreCookies)
                             requestState.WebRequest.CookieContainer = CookieContainer;
 
                         HandleAuthException(ex, requestState.WebRequest);
-
-                        if (OnAuthenticationRequired != null)
-                            OnAuthenticationRequired(requestState.WebRequest);
 
                         SendWebRequestAsync(
                             requestState.HttpMethod, requestState.Request,
@@ -347,6 +358,16 @@ namespace ServiceStack
                         HandleResponseError(ex, requestState);
                     }
                     return;
+                }
+
+                if (ExceptionFilter != null && webEx != null && webEx.Response != null)
+                {
+                    var cachedResponse = ExceptionFilter(webEx, webEx.Response, requestState.Url, typeof(T));
+                    if (cachedResponse is T)
+                    {
+                        requestState.OnSuccess((T)cachedResponse);
+                        return;
+                    }
                 }
 
                 HandleResponseError(ex, requestState);
@@ -380,6 +401,8 @@ namespace ServiceStack
             {
                 try
                 {
+                    requestState.Token.ThrowIfCancellationRequested();
+
                     var responseStream = requestState.ResponseStream;
 
                     int read = t.Result;
@@ -390,10 +413,7 @@ namespace ServiceStack
                         var responeStreamTask = responseStream.ReadAsync(requestState.BufferRead, 0, BufferSize);
 
                         requestState.ResponseBytesRead += read;
-                        if (OnDownloadProgress != null)
-                        {
-                            OnDownloadProgress(requestState.ResponseBytesRead, requestState.ResponseContentLength);
-                        }
+                        OnDownloadProgress?.Invoke(requestState.ResponseBytesRead, requestState.ResponseContentLength);
 
                         ReadCallBack(responeStreamTask, requestState);
                         return;
@@ -443,12 +463,12 @@ namespace ServiceStack
                     }
                     catch (Exception ex)
                     {
-                        Log.Debug(string.Format("Error Reading Response Error: {0}", ex.Message), ex);
+                        Log.Debug($"Error Reading Response Error: {ex.Message}", ex);
                         requestState.HandleError(default(T), ex);
                     }
                     finally
                     {
-                        responseStream.EndReadStream();
+                        PclExportClient.Instance.CloseReadStream(responseStream);
 
                         CancelAsyncFn = null;
                     }
@@ -463,14 +483,14 @@ namespace ServiceStack
         private void HandleResponseError<TResponse>(Exception exception, AsyncState<TResponse> state)
         {
             var webEx = exception as WebException;
-            if (webEx.IsWebException())
+            if (PclExportClient.Instance.IsWebException(webEx))
             {
-                var errorResponse = ((HttpWebResponse)webEx.Response);
+                var errorResponse = (HttpWebResponse)webEx.Response;
                 Log.Error(webEx);
                 if (Log.IsDebugEnabled)
                 {
-                    Log.DebugFormat("Status Code : {0}", errorResponse.StatusCode);
-                    Log.DebugFormat("Status Description : {0}", errorResponse.StatusDescription);
+                    Log.Debug($"Status Code : {errorResponse.StatusCode}");
+                    Log.Debug($"Status Description : {errorResponse.StatusDescription}");
                 }
 
                 var serviceEx = new WebServiceException(errorResponse.StatusDescription)
@@ -506,7 +526,7 @@ namespace ServiceStack
                 catch (Exception innerEx)
                 {
                     // Oh, well, we tried
-                    Log.Debug(string.Format("WebException Reading Response Error: {0}", innerEx.Message), innerEx);
+                    Log.Debug($"WebException Reading Response Error: {innerEx.Message}", innerEx);
                     state.HandleError(default(TResponse), new WebServiceException(errorResponse.StatusDescription, innerEx) {
                         StatusCode = (int)errorResponse.StatusCode,
                         StatusDescription = errorResponse.StatusDescription,
@@ -521,11 +541,11 @@ namespace ServiceStack
             {
                 var customEx = WebRequestUtils.CreateCustomException(state.Url, authEx);
 
-                Log.Debug(string.Format("AuthenticationException: {0}", customEx.Message), customEx);
+                Log.Debug($"AuthenticationException: {customEx.Message}", customEx);
                 state.HandleError(default(TResponse), authEx);
             }
 
-            Log.Debug(string.Format("Exception Reading Response Error: {0}", exception.Message), exception);
+            Log.Debug($"Exception Reading Response Error: {exception.Message}", exception);
             state.HandleError(default(TResponse), exception);
 
             CancelAsyncFn = null;
@@ -535,20 +555,14 @@ namespace ServiceStack
         {
             if (!(webResponse is HttpWebResponse)) return;
 
-            if (ResponseFilter != null)
-                ResponseFilter((HttpWebResponse)webResponse);
-
-            if (GlobalResponseFilter != null)
-                GlobalResponseFilter((HttpWebResponse)webResponse);
+            ResponseFilter?.Invoke((HttpWebResponse)webResponse);
+            GlobalResponseFilter?.Invoke((HttpWebResponse)webResponse);
         }
 
         private void ApplyWebRequestFilters(HttpWebRequest client)
         {
-            if (RequestFilter != null)
-                RequestFilter(client);
-
-            if (GlobalRequestFilter != null)
-                GlobalRequestFilter(client);
+            RequestFilter?.Invoke(client);
+            GlobalRequestFilter?.Invoke(client);
         }
 
         public void Dispose() { }

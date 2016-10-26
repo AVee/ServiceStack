@@ -5,8 +5,8 @@ using System;
 using System.IO;
 using System.Text;
 using ServiceStack.Caching;
-
-#if !(NETFX_CORE || SL5 || PCL)
+using ServiceStack.Text;
+#if !(NETFX_CORE || SL5 || PCL || NETSTANDARD1_1)
 using System.Security.Cryptography;
 #endif
 
@@ -14,7 +14,7 @@ namespace ServiceStack
 {
     public static class StreamExt
     {
-		#if !(SL5 || XBOX || ANDROID || __IOS__ || PCL)
+#if !(SL5 || XBOX || ANDROID || __IOS__ || __MAC__ || PCL)
         /// <summary>
         /// Compresses the specified text using the default compression method: Deflate
         /// </summary>
@@ -28,6 +28,20 @@ namespace ServiceStack
 
             if (compressionType == CompressionTypes.GZip)
                 return GZip(text);
+
+            throw new NotSupportedException(compressionType);
+        }
+
+        /// <summary>
+        /// Compresses the specified text using the default compression method: Deflate
+        /// </summary>
+        public static byte[] CompressBytes(this byte[] bytes, string compressionType)
+        {
+            if (compressionType == CompressionTypes.Deflate)
+                return DeflateProvider.Deflate(bytes);
+
+            if (compressionType == CompressionTypes.GZip)
+                return GZipProvider.GZip(bytes);
 
             throw new NotSupportedException(compressionType);
         }
@@ -49,6 +63,20 @@ namespace ServiceStack
 
             if (compressionType == CompressionTypes.GZip)
                 return GUnzip(gzBuffer);
+
+            throw new NotSupportedException(compressionType);
+        }
+
+        /// <summary>
+        /// Decompresses the specified gz buffer using the default compression method: Inflate
+        /// </summary>
+        public static byte[] DecompressBytes(this byte[] gzBuffer, string compressionType)
+        {
+            if (compressionType == CompressionTypes.Deflate)
+                return DeflateProvider.InflateBytes(gzBuffer);
+
+            if (compressionType == CompressionTypes.GZip)
+                return GZipProvider.GUnzipBytes(gzBuffer);
 
             throw new NotSupportedException(compressionType);
         }
@@ -76,7 +104,8 @@ namespace ServiceStack
 
         public static string ToUtf8String(this Stream stream)
         {
-            if (stream == null) throw new ArgumentNullException("stream");
+            if (stream == null)
+                throw new ArgumentNullException(nameof(stream));
 
             using (var reader = new StreamReader(stream, Encoding.UTF8))
             {
@@ -86,7 +115,8 @@ namespace ServiceStack
 
         public static byte[] ToBytes(this Stream stream)
         {
-            if (stream == null) throw new ArgumentNullException("stream");
+            if (stream == null)
+                throw new ArgumentNullException(nameof(stream));
 
             return stream.ReadFully();
         }
@@ -97,33 +127,27 @@ namespace ServiceStack
             stream.Write(bytes, 0, bytes.Length);
         }
 
-        public static void Close(this Stream stream)
-        {
-            PclExport.Instance.CloseStream(stream);
-            stream.Dispose();
-        }
-
-#if !(NETFX_CORE || SL5 || PCL)
+#if !(NETFX_CORE || SL5 || PCL || NETSTANDARD1_1)
         public static string ToMd5Hash(this Stream stream)
         {
             var hash = MD5.Create().ComputeHash(stream);
-            var sb = new StringBuilder();
-            for (var i = 0; i < hash.Length; i++)
+            var sb = StringBuilderCache.Allocate();
+            foreach (byte b in hash)
             {
-                sb.Append(hash[i].ToString("x2"));
+                sb.Append(b.ToString("x2"));
             }
-            return sb.ToString();
+            return StringBuilderCache.ReturnAndFree(sb);
         }
 
         public static string ToMd5Hash(this byte[] bytes)
         {
             var hash = MD5.Create().ComputeHash(bytes);
-            var sb = new StringBuilder();
-            for (var i = 0; i < hash.Length; i++)
+            var sb = StringBuilderCache.Allocate();
+            foreach (byte b in hash)
             {
-                sb.Append(hash[i].ToString("x2"));
+                sb.Append(b.ToString("x2"));
             }
-            return sb.ToString();
+            return StringBuilderCache.ReturnAndFree(sb);
         }
 #endif
     }

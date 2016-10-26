@@ -1,18 +1,21 @@
 ﻿//Copyright (c) Service Stack LLC. All Rights Reserved.
 //License: https://raw.github.com/ServiceStack/ServiceStack/master/license.txt
 
-#if !(XBOX || SL5 || NETFX_CORE || WP || PCL)
+#if !(XBOX || SL5 || NETFX_CORE || WP || PCL || NETSTANDARD1_1 || NETSTANDARD1_6)
 using System;
 using System.Collections.Specialized;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Threading;
-using System.Web;
 using ServiceStack;
 using ServiceStack.Web;
 
 namespace ServiceStack
 {
+#if !(ANDROID || __IOS__ || __MAC__)
+    using System.Web;
+
     public class Net40PclExportClient : PclExportClient
     {
         public static Net40PclExportClient Provider = new Net40PclExportClient();
@@ -65,7 +68,19 @@ namespace ServiceStack
             return new AsyncTimer(new
                 System.Threading.Timer(s => cb(s), state, (int)timeOut.TotalMilliseconds, Timeout.Infinite));
         }
+
+        public override Exception CreateTimeoutException(Exception ex, string errorMsg)
+        {
+            return new WebException("The request timed out", ex, WebExceptionStatus.Timeout, null);
+        }
+
+        public override bool IsWebException(WebException webEx)
+        {
+            return webEx != null && webEx.Response != null
+                && webEx.Status == WebExceptionStatus.ProtocolError;
+        }
     }
+#endif
 
     public class AsyncTimer : ITimer
     {

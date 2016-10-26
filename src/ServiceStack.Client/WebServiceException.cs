@@ -6,15 +6,16 @@ using System.Collections.Generic;
 using System.Net;
 using System.Runtime.Serialization;
 using System.Text;
+using ServiceStack.Model;
 using ServiceStack.Text;
 
 namespace ServiceStack
 {
-#if !(NETFX_CORE || WP || SL5 || PCL)
+#if !(NETFX_CORE || WP || SL5 || PCL || NETSTANDARD1_1 || NETSTANDARD1_6)
     [Serializable]
 #endif
     public class WebServiceException
-        : Exception
+        : Exception, IHasStatusCode, IHasStatusDescription, IResponseStatusConvertible
     {
         public WebServiceException() { }
         public WebServiceException(string message) : base(message) { }
@@ -44,7 +45,7 @@ namespace ServiceStack
                 }
             }
 
-            var rsMap = TypeSerializer.DeserializeFromString<Dictionary<string, string>>(responseStatus);
+            var rsMap = responseStatus.FromJsv<Dictionary<string, string>>();
             if (rsMap == null) return;
 
             rsMap = new Dictionary<string, string>(rsMap, PclExport.Instance.InvariantComparerIgnoreCase);
@@ -55,13 +56,13 @@ namespace ServiceStack
 
         private bool TryGetResponseStatusFromResponseDto(out string responseStatus)
         {
-            responseStatus = String.Empty;
+            responseStatus = string.Empty;
             try
             {
                 if (ResponseDto == null)
                     return false;
-                var jsv = TypeSerializer.SerializeToString(ResponseDto);
-                var map = TypeSerializer.DeserializeFromString<Dictionary<string, string>>(jsv);
+                var jsv = ResponseDto.ToJsv();
+                var map = jsv.FromJsv<Dictionary<string, string>>();
                 map = new Dictionary<string, string>(map, PclExport.Instance.InvariantComparerIgnoreCase);
 
                 return map.TryGetValue("ResponseStatus", out responseStatus);
@@ -74,11 +75,11 @@ namespace ServiceStack
 
         private bool TryGetResponseStatusFromResponseBody(out string responseStatus)
         {
-            responseStatus = String.Empty;
+            responseStatus = string.Empty;
             try
             {
-                if (String.IsNullOrEmpty(ResponseBody)) return false;
-                var map = TypeSerializer.DeserializeFromString<Dictionary<string, string>>(ResponseBody);
+                if (string.IsNullOrEmpty(ResponseBody)) return false;
+                var map = ResponseBody.FromJsv<Dictionary<string, string>>();
                 map = new Dictionary<string, string>(map, PclExport.Instance.InvariantComparerIgnoreCase);
                 return map.TryGetValue("ResponseStatus", out responseStatus);
             }
@@ -138,10 +139,7 @@ namespace ServiceStack
                     return hasResponseStatus.ResponseStatus;
 
                 var propertyInfo = this.ResponseDto.GetType().GetPropertyInfo("ResponseStatus");
-                if (propertyInfo == null)
-                    return null;
-
-                return propertyInfo.GetProperty(this.ResponseDto) as ResponseStatus;
+                return propertyInfo?.GetProperty(this.ResponseDto) as ResponseStatus;
             }
         }
 
@@ -166,9 +164,9 @@ namespace ServiceStack
 
         public override string ToString()
         {
-            var sb = new StringBuilder();
-            sb.AppendFormat("{0} {1}\n", StatusCode, StatusDescription);
-            sb.AppendFormat("Code: {0}, Message: {1}\n", ErrorCode, ErrorMessage);
+            var sb = StringBuilderCache.Allocate();
+            sb.Append($"{StatusCode} {StatusDescription}\n");
+            sb.Append($"Code: {ErrorCode}, Message: {ErrorMessage}\n");
 
             var status = ResponseStatus;
             if (status != null)
@@ -178,14 +176,14 @@ namespace ServiceStack
                     sb.Append("Field Errors:\n");
                     foreach (var error in status.Errors)
                     {
-                        sb.AppendFormat("  [{0}] {1}:{2}\n", error.FieldName, error.ErrorCode, error.Message);
+                        sb.Append($"  [{error.FieldName}] {error.ErrorCode}:{error.Message}\n");
 
                         if (error.Meta != null && error.Meta.Count > 0)
                         {
                             sb.Append("  Field Meta:\n");
                             foreach (var entry in error.Meta)
                             {
-                                sb.AppendFormat("    {0}:{1}\n", entry.Key, entry.Value);
+                                sb.Append($"    {entry.Key}:{entry.Value}\n");
                             }
                         }
                     }
@@ -196,16 +194,21 @@ namespace ServiceStack
                     sb.Append("Meta:\n");
                     foreach (var entry in status.Meta)
                     {
-                        sb.AppendFormat("  {0}:{1}\n", entry.Key, entry.Value);
+                        sb.Append($"  {entry.Key}:{entry.Value}\n");
                     }
                 }
             }
 
             if (!string.IsNullOrEmpty(ServerStackTrace))
-                sb.AppendFormat("Server StackTrace:\n {0}\n", ServerStackTrace);
+                sb.Append($"Server StackTrace:\n {ServerStackTrace}\n");
 
 
-            return sb.ToString();
+            return StringBuilderCache.ReturnAndFree(sb);
+        }
+
+        public ResponseStatus ToResponseStatus()
+        {
+            return ResponseStatus;
         }
     }
 }

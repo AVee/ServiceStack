@@ -1,9 +1,6 @@
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using System.Web.UI;
 using ServiceStack.Host;
-using ServiceStack.Support.WebHost;
 using ServiceStack.Templates;
 using ServiceStack.Text;
 using ServiceStack.Web;
@@ -32,29 +29,30 @@ namespace ServiceStack.Metadata
 
             var icons = CreateIcons(op);
 
-            var opTemplate = new StringBuilder("<tr><th>" + icons + "{0}</th>");
+            var opTemplate = StringBuilderCache.Allocate();
+            opTemplate.Append("<tr><th>" + icons + "{0}</th>");
             foreach (var config in MetadataConfig.AvailableFormatConfigs)
             {
                 var uri = baseUrl.CombineWith(config.DefaultMetadataUri);
                 if (MetadataConfig.IsVisible(Request, config.Format.ToFormat(), operationName))
                 {
                     show = true;
-                    opTemplate.AppendFormat(@"<td><a href=""{0}?op={{0}}"">{1}</a></td>", uri, config.Name);
+                    opTemplate.Append($@"<td><a href=""{uri}?op={{0}}"">{config.Name.UrlEncode()}</a></td>");
                 }
                 else
                 {
-                    opTemplate.AppendFormat("<td>{0}</td>", config.Name);
+                    opTemplate.Append($"<td>{config.Name}</td>");
                 }
             }
 
             opTemplate.Append("</tr>");
 
-            return show ? string.Format(opTemplate.ToString(), operationName) : "";
+            return show ? string.Format(StringBuilderCache.ReturnAndFree(opTemplate), operationName) : "";
         }
 
         private static string CreateIcons(Operation op)
         {
-            var sbIcons = new StringBuilder();
+            var sbIcons = StringBuilderCache.Allocate();
             if (op.RequiresAuthentication)
             {
                 sbIcons.Append("<i class=\"auth\" title=\"");
@@ -63,7 +61,7 @@ namespace ServiceStack.Metadata
                 if (hasRoles)
                 {
                     sbIcons.Append("Requires Roles:");
-                    var sbRoles = new StringBuilder();
+                    var sbRoles = StringBuilderCacheAlt.Allocate();
                     foreach (var role in op.RequiredRoles)
                     {
                         if (sbRoles.Length > 0)
@@ -79,7 +77,7 @@ namespace ServiceStack.Metadata
 
                         sbRoles.Append(" " + role + "?");
                     }
-                    sbIcons.Append(sbRoles);
+                    sbIcons.Append(StringBuilderCacheAlt.ReturnAndFree(sbRoles));
                 }
 
                 var hasPermissions = op.RequiredPermissions.Count + op.RequiresAnyPermission.Count > 0;
@@ -89,7 +87,7 @@ namespace ServiceStack.Metadata
                         sbIcons.Append(". ");
 
                     sbIcons.Append("Requires Permissions:");
-                    var sbPermission = new StringBuilder();
+                    var sbPermission = StringBuilderCacheAlt.Allocate();
                     foreach (var permission in op.RequiredPermissions)
                     {
                         if (sbPermission.Length > 0)
@@ -105,7 +103,7 @@ namespace ServiceStack.Metadata
 
                         sbPermission.Append(" " + permission + "?");
                     }
-                    sbIcons.Append(sbPermission);
+                    sbIcons.Append(StringBuilderCacheAlt.ReturnAndFree(sbPermission));
                 }
 
                 if (!hasRoles && !hasPermissions)
@@ -115,7 +113,7 @@ namespace ServiceStack.Metadata
             }
 
             var icons = sbIcons.Length > 0
-                ? "<span class=\"icons\">" + sbIcons + "</span>"
+                ? "<span class=\"icons\">" + StringBuilderCache.ReturnAndFree(sbIcons) + "</span>"
                 : "";
             return icons;
         }
@@ -129,14 +127,18 @@ namespace ServiceStack.Metadata
                 ForEachItem = RenderRow
             }.ToString();
 
+#if !NETSTANDARD1_6
             var xsdsPart = new ListTemplate
             {
                 Title = "XSDS:",
                 ListItemsIntMap = this.Xsds,
                 ListItemTemplate = @"<li><a href=""?xsd={0}"">{1}</a></li>"
             }.ToString();
+#else
+            var xsdsPart = "";
+#endif
 
-            var wsdlTemplate = new StringBuilder();
+            var wsdlTemplate = StringBuilderCache.Allocate();
             var soap11Config = MetadataConfig.GetMetadataConfig("soap11") as SoapMetadataConfig;
             var soap12Config = MetadataConfig.GetMetadataConfig("soap12") as SoapMetadataConfig;
             if (soap11Config != null || soap12Config != null)
@@ -183,7 +185,7 @@ namespace ServiceStack.Metadata
                 this.XsdServiceTypesIndex,
                 operationsPart,
                 xsdsPart,
-                wsdlTemplate,
+                StringBuilderCache.ReturnAndFree(wsdlTemplate),
                 pluginLinks,
                 debugOnlyInfo,
                 Env.VersionString);

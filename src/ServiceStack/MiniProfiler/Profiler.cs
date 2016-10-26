@@ -1,4 +1,6 @@
-﻿using System;
+﻿#if !NETSTANDARD1_6
+
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.Serialization;
@@ -178,7 +180,6 @@ namespace ServiceStack.MiniProfiler
         /// <summary>
         /// Ticks since this MiniProfiler was started.
         /// </summary>
-		[DataMember(Order = 13)]
 		internal long ElapsedTicks { get { return _sw.ElapsedTicks; } }
 
         /// <summary>
@@ -187,7 +188,7 @@ namespace ServiceStack.MiniProfiler
         /// <remarks>
         /// Is used when storing the Profiler in SqlStorage
         /// </remarks>
-        [DataMember(Order = 14)]
+        [DataMember(Order = 13)]
         public string Json { get; set; }
 
         /// <summary>
@@ -517,7 +518,7 @@ namespace ServiceStack.MiniProfiler
         {
             if (profiler == null) return new HtmlString("");
 
-            var text = new StringBuilder()
+            var text = StringBuilderCache.Allocate()
                 .Append(HttpUtility.HtmlEncode(Environment.MachineName)).Append(" at ").Append(DateTime.UtcNow).AppendLine();
 
             Stack<Timing> timings = new Stack<Timing>();
@@ -533,8 +534,10 @@ namespace ServiceStack.MiniProfiler
                     for (int i = children.Count - 1; i >= 0; i--) timings.Push(children[i]);
                 }
             }
-            return new HtmlString(text.ToString());
+            return new HtmlString(StringBuilderCache.ReturnAndFree(text));
         }
 
     }
 }
+
+#endif

@@ -4,9 +4,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Runtime.Remoting.Messaging;
-using System.Text;
-using System.Threading;
 using ServiceStack.Logging;
 using ServiceStack.Redis;
 using ServiceStack.Text;
@@ -76,7 +73,7 @@ namespace ServiceStack.Messaging.Redis
         {
             set
             {
-                PriortyQueuesWhitelist = new string[0];
+                PriortyQueuesWhitelist = TypeConstants.EmptyStringArray;
             }
         }
 
@@ -102,7 +99,7 @@ namespace ServiceStack.Messaging.Redis
 
         public bool DisablePublishingResponses
         {
-            set { PublishResponsesWhitelist = value ? new string[0] : null; }
+            set { PublishResponsesWhitelist = value ? TypeConstants.EmptyStringArray : null; }
         }
 
         private readonly Dictionary<Type, IMessageHandlerFactory> handlerMap
@@ -290,25 +287,25 @@ namespace ServiceStack.Messaging.Redis
         public void StartWorkerThreads()
         {
             Log.Debug("Starting all Redis MQ Server worker threads...");
-            Array.ForEach(workers, x => x.Start());
+            workers.Each(x => x.Start());
         }
 
         public void ForceRestartWorkerThreads()
         {
             Log.Debug("ForceRestart all Redis MQ Server worker threads...");
-            Array.ForEach(workers, x => x.ForceRestart());
+            workers.Each(x => x.ForceRestart());
         }
 
         public void StopWorkerThreads()
         {
             Log.Debug("Stopping all Redis MQ Server worker threads...");
-            Array.ForEach(workers, x => x.Stop());
+            workers.Each(x => x.Stop());
         }
 
         void DisposeWorkerThreads()
         {
             Log.Debug("Disposing all Redis MQ Server worker threads...");
-            if (workers != null) Array.ForEach(workers, x => x.Dispose());
+            if (workers != null) workers.Each(x => x.Dispose());
         }
 
         void WorkerErrorHandler(MessageHandlerWorker source, Exception ex)
@@ -347,7 +344,7 @@ namespace ServiceStack.Messaging.Redis
         {
             lock (workers)
             {
-                var sb = new StringBuilder("#MQ SERVER STATS:\n");
+                var sb = StringBuilderCache.Allocate().Append("#MQ SERVER STATS:\n");
                 sb.AppendLine("Listening On: " + string.Join(", ", workers.ToList().ConvertAll(x => x.QueueName).ToArray()));
                 sb.Append(RedisPubSub.GetStatsDescription());
 
@@ -356,7 +353,7 @@ namespace ServiceStack.Messaging.Redis
                     sb.AppendLine(worker.GetStats().ToString());
                     sb.AppendLine("---------------\n");
                 }
-                return sb.ToString();
+                return StringBuilderCache.ReturnAndFree(sb);
             }
         }
 

@@ -9,6 +9,7 @@ using ServiceStack.Support.WebHost;
 using ServiceStack.Web;
 using System.Text;
 using System.Threading.Tasks;
+using ServiceStack.Text;
 
 namespace ServiceStack.Metadata
 {
@@ -19,14 +20,16 @@ namespace ServiceStack.Metadata
         public string ContentType { get; set; }
         public string ContentFormat { get; set; }
 
+#if !NETSTANDARD1_6
         public override void Execute(HttpContextBase context)
         {
             var writer = new HtmlTextWriter(context.Response.Output);
-            context.Response.ContentType = "text/html";
+            context.Response.ContentType = "text/html; charset=utf-8";
 
             var request = context.ToRequest();
             ProcessOperations(writer, request, request.Response);
         }
+#endif
 
         public override void ProcessRequest(IRequest httpReq, IResponse httpRes, string operationName)
         {
@@ -36,8 +39,8 @@ namespace ServiceStack.Metadata
             using (var sw = new StreamWriter(httpRes.OutputStream))
             {
                 var writer = new HtmlTextWriter(sw);
-                httpRes.ContentType = "text/html";
-                ProcessOperations(writer, httpReq, httpRes);
+               httpRes.ContentType = "text/html; charset=utf-8";
+               ProcessOperations(writer, httpReq, httpRes);
             }
 
             httpRes.EndHttpHandlerRequest(skipHeaders:true);
@@ -53,7 +56,7 @@ namespace ServiceStack.Metadata
                 return "(Stream)";
             if (type == typeof(HttpWebResponse))
                 return "(HttpWebResponse)";
-            if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Task<>))
+            if (type.IsGenericType() && type.GetGenericTypeDefinition() == typeof(Task<>))
                 type = type.GetGenericArguments()[0]; 
 
             return CreateMessage(type);
@@ -83,11 +86,11 @@ namespace ServiceStack.Metadata
                 }
 
                 var isSoap = Format == Format.Soap11 || Format == Format.Soap12;
-                var sb = new StringBuilder();
+                var sb = StringBuilderCache.Allocate();
                 var description = operationType.GetDescription();
                 if (!description.IsNullOrEmpty())
                 {
-                    sb.AppendFormat("<h3 id='desc'>{0}</div>", ConvertToHtml(description));
+                    sb.Append($"<h3 id='desc'>{ConvertToHtml(description)}</h3>");
                 }
 
                 if (op.RequiresAuthentication)
@@ -143,11 +146,11 @@ namespace ServiceStack.Metadata
                         {
                             var path = "/" + PathUtils.CombinePaths(HostContext.Config.HandlerFactoryPath, route.Path);
 
-                            sb.AppendFormat("<th>{0}</th>", verbs);
-                            sb.AppendFormat("<th>{0}</th>", path);
+                            sb.Append($"<th>{verbs}</th>");
+                            sb.Append($"<th>{path}</th>");
                         }
-                        sb.AppendFormat("<td>{0}</td>", route.Summary);
-                        sb.AppendFormat("<td><i>{0}</i></td>", route.Notes);
+                        sb.Append($"<td>{route.Summary}</td>");
+                        sb.Append($"<td><i>{route.Notes}</i></td>");
                         sb.Append("</tr>");
                     }
 
@@ -161,8 +164,8 @@ namespace ServiceStack.Metadata
 
                 sb.Append(@"<div class=""call-info"">");
                 var overrideExtCopy = HostContext.Config.AllowRouteContentTypeExtensions
-                   ? " the <b>.{0}</b> suffix or ".Fmt(ContentFormat)
-                   : "";
+                   ? $" the <b>.{ContentFormat}</b> suffix or "
+                    : "";
                 sb.AppendFormat(@"<p>To override the Content-type in your clients, use the HTTP <b>Accept</b> Header, append {1} <b>?format={0}</b></p>", ContentFormat, overrideExtCopy);
                 if (ContentFormat == "json")
                 {
@@ -170,7 +173,8 @@ namespace ServiceStack.Metadata
                 }
                 sb.Append("</div>");
 
-                RenderOperation(writer, httpReq, operationName, requestMessage, responseMessage, sb.ToString());
+                RenderOperation(writer, httpReq, operationName, requestMessage, responseMessage,
+                    StringBuilderCache.ReturnAndFree(sb));
                 return;
             }
 
@@ -182,7 +186,7 @@ namespace ServiceStack.Metadata
             if (metadataType.Properties.IsEmpty()) return;
             
             sb.Append("<table class='params'>");
-            sb.Append("<caption><b>{0}</b> Parameters:</caption>".Fmt(ConvertToHtml(metadataType.DisplayType ?? metadataType.Name)));
+            sb.Append($"<caption><b>{ConvertToHtml(metadataType.DisplayType ?? metadataType.Name)}</b> Parameters:</caption>");
             sb.Append("<thead><tr>");
             sb.Append("<th>Name</th>");
             sb.Append("<th>Parameter</th>");
@@ -195,24 +199,24 @@ namespace ServiceStack.Metadata
             foreach (var p in metadataType.Properties)
             {
                 sb.Append("<tr>");
-                sb.AppendFormat("<td>{0}</td>", ConvertToHtml(p.Name));
-                sb.AppendFormat("<td>{0}</td>", p.GetParamType(metadataType, op));
-                sb.AppendFormat("<td>{0}</td>", ConvertToHtml(p.DisplayType ?? p.Type));
-                sb.AppendFormat("<td>{0}</td>", p.IsRequired.GetValueOrDefault() ? "Yes" : "No");
+                sb.Append($"<td>{ConvertToHtml(p.Name)}</td>");
+                sb.Append($"<td>{p.GetParamType(metadataType, op)}</td>");
+                sb.Append($"<td>{ConvertToHtml(p.DisplayType ?? p.Type)}</td>");
+                sb.Append($"<td>{(p.IsRequired.GetValueOrDefault() ? "Yes" : "No")}</td>");
 
                 var desc = p.Description;
                 if (!p.AllowableValues.IsEmpty())
                 {
                     desc += "<h4>Allowable Values</h4>";
                     desc += "<ul>";
-                    p.AllowableValues.Each(x => desc += "<li>{0}</li>".Fmt(x));
+                    p.AllowableValues.Each(x => desc += $"<li>{x}</li>");
                     desc += "</ul>";
                 }
                 if (p.AllowableMin != null)
                 {
-                    desc += "<h4>Valid Range: {0} - {1}</h4>".Fmt(p.AllowableMin, p.AllowableMax);
+                    desc += $"<h4>Valid Range: {p.AllowableMin} - {p.AllowableMax}</h4>";
                 }
-                sb.AppendFormat("<td>{0}</td>", desc);
+                sb.Append($"<td>{desc}</td>");
                 
                 sb.Append("</tr>");
             }
@@ -233,10 +237,7 @@ namespace ServiceStack.Metadata
             };
 
             var metadataFeature = HostContext.GetPlugin<MetadataFeature>();
-            if (metadataFeature != null && metadataFeature.IndexPageFilter != null)
-            {
-                metadataFeature.IndexPageFilter(defaultPage);
-            }
+            metadataFeature?.IndexPageFilter?.Invoke(defaultPage);
 
             defaultPage.RenderControl(writer);
         }
@@ -291,11 +292,7 @@ namespace ServiceStack.Metadata
             }
 
             var metadataFeature = HostContext.GetPlugin<MetadataFeature>();
-            if (metadataFeature != null && metadataFeature.DetailPageFilter != null)
-            {
-                metadataFeature.DetailPageFilter(operationControl);
-            }
-
+            metadataFeature?.DetailPageFilter?.Invoke(operationControl);
             operationControl.Render(writer);
         }
 

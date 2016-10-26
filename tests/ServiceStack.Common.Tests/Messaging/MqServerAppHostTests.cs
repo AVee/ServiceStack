@@ -1,4 +1,5 @@
-﻿using System;
+﻿#if !NETCORE_SUPPORT
+using System;
 using System.Threading.Tasks;
 using Funq;
 using NUnit.Framework;
@@ -123,8 +124,8 @@ namespace ServiceStack.Common.Tests.Messaging
 
         public async Task<object> Any(AnyTestMqAsync request)
         {
-            return await Task.Factory.StartNew(() => 
-                new AnyTestMqResponse {CorrelationId = request.Id});
+            return await Task.Factory.StartNew(() =>
+                new AnyTestMqResponse { CorrelationId = request.Id });
         }
 
         public object Post(PostTestMq request)
@@ -161,12 +162,11 @@ namespace ServiceStack.Common.Tests.Messaging
             container.Register(c => createMqServerFn());
 
             var mqServer = container.Resolve<IMessageService>();
-            mqServer.RegisterHandler<AnyTestMq>(ServiceController.ExecuteMessage);
-            mqServer.RegisterHandler<AnyTestMqAsync>(msg 
-             => ServiceController.ExecuteMessage(msg));
-            mqServer.RegisterHandler<PostTestMq>(ServiceController.ExecuteMessage);
-            mqServer.RegisterHandler<ValidateTestMq>(ServiceController.ExecuteMessage);
-            mqServer.RegisterHandler<ThrowGenericError>(ServiceController.ExecuteMessage);
+            mqServer.RegisterHandler<AnyTestMq>(ExecuteMessage);
+            mqServer.RegisterHandler<AnyTestMqAsync>(ExecuteMessage);
+            mqServer.RegisterHandler<PostTestMq>(ExecuteMessage);
+            mqServer.RegisterHandler<ValidateTestMq>(ExecuteMessage);
+            mqServer.RegisterHandler<ThrowGenericError>(ExecuteMessage);
 
             mqServer.Start();
         }
@@ -393,3 +393,4 @@ namespace ServiceStack.Common.Tests.Messaging
         }
     }
 }
+#endif

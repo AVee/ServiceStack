@@ -2,7 +2,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using ServiceStack.Text;
 
 namespace ServiceStack.Messaging
@@ -55,14 +54,11 @@ namespace ServiceStack.Messaging
         public IMessageHandlerStats GetStats()
         {
             var total = new MessageHandlerStats("All Handlers");
-            messageHandlers.ToList().ForEach(x => total.Add(x.GetStats()));
+            messageHandlers.Each(x => total.Add(x.GetStats()));
             return total;
         }
 
-        public List<Type> RegisteredTypes
-        {
-            get { return handlerMap.Keys.ToList(); }
-        }
+        public List<Type> RegisteredTypes => handlerMap.Keys.ToList();
 
         public string GetStatus()
         {
@@ -71,14 +67,15 @@ namespace ServiceStack.Messaging
 
         public string GetStatsDescription()
         {
-            var sb = new StringBuilder("#MQ HOST STATS:\n");
+            var sb = StringBuilderCache.Allocate();
+            sb.Append("#MQ HOST STATS:\n");
             sb.AppendLine("===============");
             foreach (var messageHandler in messageHandlers)
             {
                 sb.AppendLine(messageHandler.GetStats().ToString());
                 sb.AppendLine("---------------");
             }
-            return sb.ToString();
+            return StringBuilderCache.ReturnAndFree(sb);
         }
 
         protected IMessageHandlerFactory CreateMessageHandlerFactory<T>(

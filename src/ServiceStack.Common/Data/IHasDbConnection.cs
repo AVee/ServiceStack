@@ -6,14 +6,19 @@ using System.Data;
 
 namespace ServiceStack.Data
 {
-	public interface IHasDbConnection
-	{
-		IDbConnection DbConnection { get; }
-	}
+    public interface IHasDbConnection
+    {
+        IDbConnection DbConnection { get; }
+    }
 
     public interface IHasDbCommand
     {
         IDbCommand DbCommand { get; }
+    }
+
+    public interface IHasDbTransaction
+    {
+        IDbTransaction DbTransaction { get; }
     }
 }
 #endif

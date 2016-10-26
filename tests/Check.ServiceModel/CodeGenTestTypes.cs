@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Net;
 using System.Runtime.Serialization;
 using Check.ServiceModel.Types;
@@ -8,6 +9,27 @@ using ServiceStack.DataAnnotations;
 
 namespace Check.ServiceModel.Operations
 {
+    [System.ComponentModel.Description("Description for HelloACodeGenTest")]
+    public class HelloACodeGenTest
+    {
+        [Description("Description for FirstField")]
+        public int FirstField { get; set; }
+
+        public List<string> SecondFields { get; set; }
+    }
+
+    [DataContract]
+    public class HelloACodeGenTestResponse
+    {
+        [DataMember]
+        [Description("Description for FirstResult")]
+        public int FirstResult { get; set; }
+
+        [DataMember]
+        [ApiMember(Description = "Description for SecondResult")]
+        public int SecondResult { get; set; }
+    }
+
     [Route("/hello")]
     [Route("/hello/{Name}")]
     public class Hello
@@ -148,6 +170,7 @@ namespace Check.ServiceModel.Operations
         [Required]
         [Range(1, 10)]
         [Default(5)]
+        [DataMember]
         public int Id { get; set; }
 
         [Range(1.0, 10.0)]
@@ -340,6 +363,7 @@ namespace Check.ServiceModel.Types
         public Dictionary<string, string> StringMap { get; set; }
         public Dictionary<int, string> IntStringMap { get; set; }
         public SubType SubType { get; set; }
+        public Point Point { get; set; }
 
         [DataMember(Name = "aliasedName")]
         public string OriginalName { get; set; }
@@ -363,6 +387,35 @@ namespace Check.ServiceModel.Types
     public class Poco
     {
         public string Name { get; set; }
+    }
+
+    public struct Point
+    {
+        public Point(double x=0, double y=0) : this()
+        {
+            X = x;
+            Y = y;
+        }
+
+        public Point(string point) : this()
+        {
+            var parts = point.Split(',');
+            X = double.Parse(parts[0]);
+            Y = double.Parse(parts[1]);
+        }
+
+        public double X { get; set; }
+        public double Y { get; set; }
+
+        public override string ToString()
+        {
+            return X.ToString(CultureInfo.InvariantCulture) + "," + Y.ToString(CultureInfo.InvariantCulture);
+        }
+    }
+
+    public class HelloStruct : IReturn<HelloStruct>
+    {
+        public Point Point { get; set; }
     }
 
     public abstract class HelloBase
@@ -463,6 +516,12 @@ namespace Check.ServiceModel.Types
             public string Name { get; set; }
         }
 
+        public class InnerTypeItem
+        {
+            public long Id { get; set; }
+            public string Name { get; set; }
+        }
+
         public enum InnerEnum
         {
             Foo,
@@ -478,6 +537,8 @@ namespace Check.ServiceModel.Types
         public TypesGroup.InnerType InnerType { get; set; }
 
         public TypesGroup.InnerEnum InnerEnum { get; set; }
+
+        public List<TypesGroup.InnerTypeItem> InnerList { get; set; }
     }
 
     public class QueryTemplate : IReturn<QueryResponseTemplate<Poco>> {}
@@ -578,6 +639,36 @@ namespace Check.ServiceModel.Types
     }
 
     public class ExcludeTestNested
+    {
+        public int Id { get; set; }
+    }
+
+
+    [Exclude(Feature.Metadata)]
+    public class ExcludeMetadata : IReturn<ExcludeMetadata>
+    {
+        public int Id { get; set; }
+    }
+
+    [Restrict(LocalhostOnly = true)]
+    public class RestrictLocalhost : IReturn<RestrictLocalhost>
+    {
+        public int Id { get; set; }
+    }
+
+    [Restrict(InternalOnly = true)]
+    public class RestrictInternal : IReturn<RestrictInternal>
+    {
+        public int Id { get; set; }
+    }
+
+    [Restrict(ExternalOnly = true)]
+    public class RestrictExternal : IReturn<RestrictExternal>
+    {
+        public int Id { get; set; }
+    }
+
+    public class IgnoreInMetadataConfig : IReturn<IgnoreInMetadataConfig>
     {
         public int Id { get; set; }
     }

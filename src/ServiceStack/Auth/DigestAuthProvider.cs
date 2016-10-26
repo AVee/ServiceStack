@@ -32,35 +32,36 @@ namespace ServiceStack.Auth
 
         public virtual bool TryAuthenticate(IServiceBase authService, string userName, string password)
         {
-            var authRepo = authService.TryResolve<IAuthRepository>();
-            if (authRepo == null) {
-                Log.WarnFormat("Tried to authenticate without a registered IUserAuthRepository");
+            var authRepo = HostContext.AppHost.GetAuthRepository(authService.Request);
+            using (authRepo as IDisposable)
+            {
+                var session = authService.GetSession();
+                var digestInfo = authService.Request.GetDigestAuth();
+                IUserAuth userAuth;
+                if (authRepo.TryAuthenticate(digestInfo, PrivateKey, NonceTimeOut, session.Sequence, out userAuth))
+                {
+
+                    var holdSessionId = session.Id;
+                    session.PopulateWith(userAuth); //overwrites session.Id
+                    session.Id = holdSessionId;
+                    session.IsAuthenticated = true;
+                    session.Sequence = digestInfo["nc"];
+                    session.UserAuthId = userAuth.Id.ToString(CultureInfo.InvariantCulture);
+                    session.ProviderOAuthAccess = authRepo.GetUserAuthDetails(session.UserAuthId)
+                        .ConvertAll(x => (IAuthTokens)x);
+
+                    return true;
+                }
                 return false;
             }
-
-            var session = authService.GetSession();
-            var digestInfo = authService.Request.GetDigestAuth();
-            IUserAuth userAuth;
-            if (authRepo.TryAuthenticate(digestInfo, PrivateKey, NonceTimeOut, session.Sequence, out userAuth)) {
-
-                var holdSessionId = session.Id;
-                session.PopulateWith(userAuth); //overwrites session.Id
-                session.Id = holdSessionId;
-                session.IsAuthenticated = true;
-                session.Sequence = digestInfo["nc"];
-                session.UserAuthId = userAuth.Id.ToString(CultureInfo.InvariantCulture);
-                session.ProviderOAuthAccess = authRepo.GetUserAuthDetails(session.UserAuthId)
-                    .ConvertAll(x => (IAuthTokens) x);
-
-                return true;
-            }
-            return false;
         }
 
         public override bool IsAuthorized(IAuthSession session, IAuthTokens tokens, Authenticate request = null)
         {
-            if (request != null) {
-                if (!LoginMatchesSession(session, request.UserName)) {
+            if (request != null)
+            {
+                if (!LoginMatchesSession(session, request.UserName))
+                {
                     return false;
                 }
             }
@@ -76,7 +77,8 @@ namespace ServiceStack.Auth
 
         protected object Authenticate(IServiceBase authService, IAuthSession session, string userName, string password)
         {
-            if (!LoginMatchesSession(session, userName)) {
+            if (!LoginMatchesSession(session, userName))
+            {
                 authService.RemoveSession();
                 session = authService.GetSession();
             }
@@ -85,14 +87,15 @@ namespace ServiceStack.Auth
             {
                 session.IsAuthenticated = true;
 
-                if (session.UserAuthName == null) 
+                if (session.UserAuthName == null)
                     session.UserAuthName = userName;
 
                 var response = OnAuthenticated(authService, session, null, null);
                 if (response != null)
                     return response;
 
-                return new AuthenticateResponse {
+                return new AuthenticateResponse
+                {
                     UserId = session.UserAuthId,
                     UserName = userName,
                     SessionId = session.Id,
@@ -105,32 +108,35 @@ namespace ServiceStack.Auth
         public override IHttpResult OnAuthenticated(IServiceBase authService, IAuthSession session, IAuthTokens tokens, Dictionary<string, string> authInfo)
         {
             var userSession = session as AuthUserSession;
-            if (userSession != null) {
+            if (userSession != null)
+            {
                 LoadUserAuthInfo(userSession, tokens, authInfo);
                 HostContext.TryResolve<IAuthMetadataProvider>().SafeAddMetadata(tokens, authInfo);
             }
 
-            var authRepo = authService.TryResolve<IAuthRepository>();
-            if (authRepo != null) {
-                if (tokens != null) {
-                    authInfo.ForEach((x, y) => tokens.Items[x] = y);
-                    session.UserAuthId = authRepo.CreateOrMergeAuthSession(session, tokens).UserAuthId.ToString();
-                }
-
-                foreach (var oAuthToken in session.ProviderOAuthAccess) {
-                    var authProvider = AuthenticateService.GetAuthProvider(oAuthToken.Provider);
-                    if (authProvider == null) {
-                        continue;
+            var authRepo = HostContext.AppHost.GetAuthRepository(authService.Request);
+            using (authRepo as IDisposable)
+            {
+                if (authRepo != null)
+                {
+                    if (tokens != null)
+                    {
+                        authInfo.ForEach((x, y) => tokens.Items[x] = y);
+                        session.UserAuthId = authRepo.CreateOrMergeAuthSession(session, tokens).UserAuthId.ToString();
                     }
-                    var userAuthProvider = authProvider as OAuthProvider;
-                    if (userAuthProvider != null) {
-                        userAuthProvider.LoadUserOAuthProvider(session, oAuthToken);
-                    }
-                }
 
-                var failed = ValidateAccount(authService, authRepo, session, tokens);
-                if (failed != null)
-                    return failed;
+                    foreach (var oAuthToken in session.GetAuthTokens())
+                    {
+                        var authProvider = AuthenticateService.GetAuthProvider(oAuthToken.Provider);
+
+                        var userAuthProvider = authProvider as OAuthProvider;
+                        userAuthProvider?.LoadUserOAuthProvider(session, oAuthToken);
+                    }
+
+                    var failed = ValidateAccount(authService, authRepo, session, tokens);
+                    if (failed != null)
+                        return failed;
+                }
             }
 
             try
@@ -140,7 +146,7 @@ namespace ServiceStack.Auth
             }
             finally
             {
-                authService.SaveSession(session, SessionExpiry);
+                this.SaveSession(authService, session, SessionExpiry);
             }
 
             return null;
@@ -149,34 +155,35 @@ namespace ServiceStack.Auth
         public override void OnFailedAuthentication(IAuthSession session, IRequest httpReq, IResponse httpRes)
         {
             var digestHelper = new DigestAuthFunctions();
-            httpRes.StatusCode = (int) HttpStatusCode.Unauthorized;
+            httpRes.StatusCode = (int)HttpStatusCode.Unauthorized;
             httpRes.AddHeader(
                 HttpHeaders.WwwAuthenticate,
-                "{0} realm=\"{1}\", nonce=\"{2}\", qop=\"auth\"".Fmt(Provider, AuthRealm, digestHelper.GetNonce(httpReq.UserHostAddress, PrivateKey)));
+                $"{Provider} realm=\"{AuthRealm}\", nonce=\"{digestHelper.GetNonce(httpReq.UserHostAddress, PrivateKey)}\", qop=\"auth\"");
             httpRes.EndRequest();
         }
 
         public void PreAuthenticate(IRequest req, IResponse res)
         {
-            //Need to run SessionFeature filter since its not executed before this attribute (Priority -100)			
-            SessionFeature.AddSessionIdToRequestFilter(req, res, null); //Required to get req.GetSessionId()
-
             var digestAuth = req.GetDigestAuth();
             if (digestAuth != null)
             {
-                var authService = req.TryResolve<AuthenticateService>();
-                authService.Request = req;
-                var response = authService.Post(new Authenticate
+                //Need to run SessionFeature filter since its not executed before this attribute (Priority -100)			
+                SessionFeature.AddSessionIdToRequestFilter(req, res, null); //Required to get req.GetSessionId()
+
+                using (var authService = HostContext.ResolveService<AuthenticateService>(req))
                 {
-                    provider = Name,
-                    nonce = digestAuth["nonce"],
-                    uri = digestAuth["uri"],
-                    response = digestAuth["response"],
-                    qop = digestAuth["qop"],
-                    nc = digestAuth["nc"],
-                    cnonce = digestAuth["cnonce"],
-                    UserName = digestAuth["username"]
-                });
+                    var response = authService.Post(new Authenticate
+                    {
+                        provider = Name,
+                        nonce = digestAuth["nonce"],
+                        uri = digestAuth["uri"],
+                        response = digestAuth["response"],
+                        qop = digestAuth["qop"],
+                        nc = digestAuth["nc"],
+                        cnonce = digestAuth["cnonce"],
+                        UserName = digestAuth["username"]
+                    });
+                }
             }
         }
     }

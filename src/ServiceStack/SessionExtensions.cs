@@ -92,25 +92,49 @@ namespace ServiceStack
                 : tempId;
         }
 
-        static readonly RandomNumberGenerator randgen = new RNGCryptoServiceProvider();
+        static readonly RandomNumberGenerator randgen = RandomNumberGenerator.Create();
+
+        [ThreadStatic] static byte[] SessionBytesCache;
+
         public static string CreateRandomSessionId()
         {
+            if (SessionBytesCache == null)
+                SessionBytesCache = new byte[15];
+
             string base64Id;
             do
             {
-                base64Id = CreateRandomBase64Id();
+                PopulateWithSecureRandomBytes(SessionBytesCache);
+                base64Id = Convert.ToBase64String(SessionBytesCache);
             } while (Base64StringContainsUrlUnfriendlyChars(base64Id));
             return base64Id;
         }
 
-        public static string CreateRandomBase64Id()
+        public static void PopulateWithSecureRandomBytes(byte[] bytes)
         {
-            var data = new byte[15];
+            randgen.GetBytes(bytes);
+        }
+
+        public static string CreateRandomBase64Id(int size = 15)
+        {
+            var data = new byte[size];
             randgen.GetBytes(data);
             return Convert.ToBase64String(data);
         }
 
-        static readonly char[] UrlUnsafeBase64Chars = new[] { '+', '/' };
+        public static string CreateRandomBase62Id(int size)
+        {
+            var bytes = new byte[size];
+            string base64Id;
+            do
+            {
+                PopulateWithSecureRandomBytes(bytes);
+                base64Id = Convert.ToBase64String(bytes);
+            } while (Base64StringContainsUrlUnfriendlyChars(base64Id));
+            return base64Id;
+        }
+
+        static readonly char[] UrlUnsafeBase64Chars = { '+', '/' };
         public static bool Base64StringContainsUrlUnfriendlyChars(string base64)
         {
             return base64.IndexOfAny(UrlUnsafeBase64Chars) >= 0;
@@ -121,11 +145,8 @@ namespace ServiceStack
             var sessionId = CreateRandomSessionId();
 
             var httpRes = res as IHttpResponse;
-            if (httpRes != null)
-            {
-                httpRes.Cookies.AddPermanentCookie(SessionFeature.PermanentSessionId, sessionId,
-                    (HostContext.Config.OnlySendSessionCookiesSecurely && req.IsSecureConnection));
-            }
+            httpRes?.Cookies.AddPermanentCookie(SessionFeature.PermanentSessionId, sessionId,
+                HostContext.Config.OnlySendSessionCookiesSecurely && req.IsSecureConnection);
 
             req.Items[SessionFeature.PermanentSessionId] = sessionId;
             return sessionId;
@@ -136,11 +157,8 @@ namespace ServiceStack
             var sessionId = CreateRandomSessionId();
 
             var httpRes = res as IHttpResponse;
-            if (httpRes != null)
-            {
-                httpRes.Cookies.AddSessionCookie(SessionFeature.SessionId, sessionId,
-                    (HostContext.Config.OnlySendSessionCookiesSecurely && req.IsSecureConnection));
-            }
+            httpRes?.Cookies.AddSessionCookie(SessionFeature.SessionId, sessionId,
+                HostContext.Config.OnlySendSessionCookiesSecurely && req.IsSecureConnection);
 
             req.Items[SessionFeature.SessionId] = sessionId;
             return sessionId;
@@ -168,13 +186,20 @@ namespace ServiceStack
 
         public static void UpdateFromUserAuthRepo(this IAuthSession session, IRequest req, IAuthRepository userAuthRepo = null)
         {
+            if (session == null)
+                return;
+
             if (userAuthRepo == null)
-                userAuthRepo = req.TryResolve<IAuthRepository>();
+                userAuthRepo = HostContext.AppHost.GetAuthRepository(req);
 
-            if (userAuthRepo == null) return;
+            if (userAuthRepo == null)
+                return;
 
-            var userAuth = userAuthRepo.GetUserAuth(session, null);
-            session.UpdateSession(userAuth);
+            using (userAuthRepo as IDisposable)
+            {
+                var userAuth = userAuthRepo.GetUserAuth(session, null);
+                session.UpdateSession(userAuth);
+            }
         }
 
         public static HashSet<string> AddSessionOptions(this IRequest req, params string[] options)
@@ -198,8 +223,7 @@ namespace ServiceStack
             var strOptions = string.Join(",", existingOptions.ToArray());
 
             var httpRes = req.Response as IHttpResponse;
-            if (httpRes != null)
-                httpRes.Cookies.AddPermanentCookie(SessionFeature.SessionOptionsKey, strOptions);
+            httpRes?.Cookies.AddPermanentCookie(SessionFeature.SessionOptionsKey, strOptions);
 
             req.Items[SessionFeature.SessionOptionsKey] = strOptions;
 
@@ -267,9 +291,15 @@ namespace ServiceStack
         {
             var httpRes = response as IHttpResponse;
             if (httpRes == null) return;
-            httpRes.Cookies.DeleteCookie(SessionFeature.SessionId);
-            httpRes.Cookies.DeleteCookie(SessionFeature.PermanentSessionId);
+            httpRes.Cookies.DeleteCookie(Keywords.SessionId);
+            httpRes.Cookies.DeleteCookie(Keywords.PermanentSessionId);
             httpRes.Cookies.DeleteCookie(HttpHeaders.XUserAuthId);
+        }
+
+        public static void DeleteJwtCookie(this IResponse response)
+        {
+            var httpRes = response as IHttpResponse;
+            httpRes?.Cookies.DeleteCookie(Keywords.TokenCookie);
         }
 
         public static void GenerateNewSessionCookies(this IRequest req, IAuthSession session)
@@ -278,20 +308,23 @@ namespace ServiceStack
             if (httpRes == null)
                 return;
 
+            var sessionId = req.GetSessionId();
+            if (sessionId != null)
+                req.RemoveSession(sessionId);
+
             req.Response.ClearCookies();
 
             var tempId = req.Response.CreateTemporarySessionId(req);
             var permId = req.Response.CreatePermanentSessionId(req);
 
             var isPerm = req.IsPermanentSession();
-            if (isPerm)
-                req.AddSessionOptions(SessionOptions.Permanent);
+            req.AddSessionOptions(isPerm ? SessionOptions.Permanent : SessionOptions.Temporary);
 
             session.Id = isPerm
                 ? permId
                 : tempId;
 
-            req.SaveSessionInItems(session);
+            req.Items[Keywords.Session] = session;
         }
     }
 }

@@ -17,7 +17,7 @@ namespace ServiceStack
         public AsyncState(int bufferSize)
         {
             BufferRead = new byte[bufferSize];
-            TextData = new StringBuilder();
+            TextData = StringBuilderCache.Allocate();
             BytesData = MemoryStreamFactory.GetStream(bufferSize);
             WebRequest = null;
             ResponseStream = null;
@@ -45,7 +45,11 @@ namespace ServiceStack
 
         public int RequestCount;
 
+#if !NETSTANDARD1_1
         public ITimer Timer;
+#endif
+
+        public CancellationToken Token;
 
         public Action<WebResponse> OnResponseInit;
 
@@ -86,7 +90,7 @@ namespace ServiceStack
             var toReturn = ex;
             if (timedOut)
             {
-                toReturn = ex.CreateTimeoutException("The request timed out");
+                toReturn = PclExportClient.Instance.CreateTimeoutException(ex, "The request timed out");
             }
 
             if (UseSynchronizationContext != null)
@@ -99,16 +103,20 @@ namespace ServiceStack
 
         public void StartTimer(TimeSpan timeOut)
         {
-            this.Timer = this.CreateTimer(timeOut);
+#if !NETSTANDARD1_1
+            this.Timer = PclExportClient.Instance.CreateTimer(this.TimedOut, timeOut, this);
+#endif
         }
 
         public void StopTimer()
         {
+#if !NETSTANDARD1_1
             if (this.Timer != null)
             {
                 this.Timer.Cancel();
                 this.Timer = null;
             }
+#endif
         }
 
 #if NETFX_CORE
@@ -147,16 +155,23 @@ namespace ServiceStack
 
         public void Dispose()
         {
+            if (TextData != null)
+            {
+                StringBuilderCache.Free(TextData);
+                TextData = null;
+            }
             if (this.BytesData != null)
             {
                 this.BytesData.Dispose();
                 this.BytesData = null;
             }
+#if !NETSTANDARD1_1
             if (this.Timer != null)
             {
                 this.Timer.Dispose();
                 this.Timer = null;
             }
+#endif
         }
     }
 }

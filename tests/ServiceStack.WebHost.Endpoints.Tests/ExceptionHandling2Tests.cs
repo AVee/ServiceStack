@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using System.Runtime.Serialization;
 using NUnit.Framework;
 using ProtoBuf;
-using ServiceStack.ProtoBuf;
-using ServiceStack.ServiceModel;
 using ServiceStack.Text;
+using ServiceStack.ProtoBuf;
+#if !NETCORE_SUPPORT
+using ServiceStack.ServiceModel;
+#endif
 
 namespace ServiceStack.WebHost.Endpoints.Tests
 {
@@ -92,7 +94,8 @@ namespace ServiceStack.WebHost.Endpoints.Tests
             if (request.Age.HasValue && request.Age <= 0)
                 throw new ArgumentException("Invalid Age");
 
-            var response = new SearchReqstarsResponse {
+            var response = new SearchReqstarsResponse
+            {
                 Total = 2,
                 Aged = 10,
                 Results = new List<Reqstar> {
@@ -112,7 +115,8 @@ namespace ServiceStack.WebHost.Endpoints.Tests
             if (request.Age.HasValue && request.Age <= 0)
                 throw new ArgumentException("Invalid Age");
 
-            var response = new ReqstarsResponse() {
+            var response = new ReqstarsResponse()
+            {
                 Total = 2,
                 Aged = 10,
                 Results = new List<Reqstar> {
@@ -124,11 +128,11 @@ namespace ServiceStack.WebHost.Endpoints.Tests
             return response;
         }
     }
-    
+
     public class AppHost : AppHostHttpListenerBase
     {
         public AppHost()
-            : base("Test ErrorHandling", typeof(ReqstarsService).Assembly)
+            : base("Test ErrorHandling", typeof(ReqstarsService).GetAssembly())
         {
         }
 
@@ -141,7 +145,7 @@ namespace ServiceStack.WebHost.Endpoints.Tests
     [TestFixture]
     public class ExceptionHandling2Tests
     {
-        private static string testUri = "http://localhost:1337/";
+        private static string testUri = Config.ListeningOn;
 
         AppHost appHost;
 
@@ -152,8 +156,10 @@ namespace ServiceStack.WebHost.Endpoints.Tests
             {
                 appHost = new AppHost();
                 appHost.Init();
+#if !NETCORE_SUPPORT                
                 appHost.Config.DebugMode = true;
-                appHost.Start("http://*:1337/");
+#endif
+                appHost.Start(Config.ListeningOn);
             }
             catch (Exception ex)
             {
@@ -167,14 +173,14 @@ namespace ServiceStack.WebHost.Endpoints.Tests
             appHost.Dispose();
         }
 
-        static IRestClient[] ServiceClients = 
-		{
-			new JsonServiceClient(testUri),
-			new JsonHttpClient(testUri),
-			new XmlServiceClient(testUri),
-			new JsvServiceClient(testUri),
-			new ProtoBufServiceClient(testUri)
-		};
+        static IRestClient[] ServiceClients =
+        {
+            new JsonServiceClient(testUri),
+            new JsonHttpClient(testUri),
+            new XmlServiceClient(testUri),
+            new JsvServiceClient(testUri),
+            new ProtoBufServiceClient(testUri)
+        };
 
 
         /// <summary>
@@ -297,6 +303,6 @@ namespace ServiceStack.WebHost.Endpoints.Tests
                 Assert.AreEqual("Invalid Age", ex.ErrorMessage, "Wrong message");
             }
         }
-        
+
     }
 }

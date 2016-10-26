@@ -20,10 +20,7 @@ namespace ServiceStack.Host
 
         public Dictionary<string, string> Headers { get; set; }
 
-        public object OriginalResponse
-        {
-            get { return null; }
-        }
+        public object OriginalResponse => null;
 
         public IRequest Request { get; private set; }
 
@@ -36,6 +33,13 @@ namespace ServiceStack.Host
         public void AddHeader(string name, string value)
         {
             this.Headers[name] = value;
+        }
+
+        public string GetHeader(string name)
+        {
+            string value;
+            this.Headers.TryGetValue(name, out value);
+            return value;
         }
 
         public void Redirect(string url)

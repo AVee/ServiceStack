@@ -30,9 +30,10 @@ namespace ServiceStack.ServiceHost.Tests.Formats
 
             appHost = new BasicAppHost
             {
-                ConfigFilter = config => {
+                ConfigFilter = config =>
+                {
                     //Files aren't copied, set RootDirectory to ProjectPath instead.
-                    config.WebHostPhysicalPath = "~".MapProjectPath(); 
+                    config.WebHostPhysicalPath = "~".MapProjectPath();
                 }
             }.Init();
             markdownFormat = appHost.GetPlugin<MarkdownFormat>();
@@ -165,6 +166,13 @@ namespace ServiceStack.ServiceHost.Tests.Formats
                 this.Headers.Add(name, value);
             }
 
+            public string GetHeader(string name)
+            {
+                string value;
+                this.Headers.TryGetValue(name, out value);
+                return value;
+            }
+
             public void Redirect(string url)
             {
                 this.Headers[HttpHeaders.Location] = url;
@@ -213,7 +221,7 @@ namespace ServiceStack.ServiceHost.Tests.Formats
             public Dictionary<string, object> Items { get; private set; }
 
             public void SetCookie(Cookie cookie)
-            {                
+            {
             }
 
             public void ClearCookies()

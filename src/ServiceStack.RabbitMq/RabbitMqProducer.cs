@@ -94,27 +94,33 @@ namespace ServiceStack.RabbitMq
 
         public virtual void Publish(string queueName, IMessage message, string exchange)
         {
-            using (__requestAccess())
+            var props = Channel.CreateBasicProperties();
+            props.Persistent = true;
+            props.PopulateFromMessage(message);
+
+            if (message.Meta != null)
             {
-                var props = Channel.CreateBasicProperties();
-                props.Persistent = true;
-                props.PopulateFromMessage(message);
-
-                if (PublishMessageFilter != null)
+                props.Headers = new Dictionary<string, object>();
+                foreach (var entry in message.Meta)
                 {
-                    PublishMessageFilter(queueName, props, message);
+                    props.Headers[entry.Key] = entry.Value;
                 }
+            }
 
-                var messageBytes = message.Body.ToJson().ToUtf8Bytes();
+            if (PublishMessageFilter != null)
+            {
+                PublishMessageFilter(queueName, props, message);
+            }
 
-                PublishMessage(exchange ?? QueueNames.Exchange,
-                    routingKey: queueName,
-                    basicProperties: props, body: messageBytes);
+            var messageBytes = message.Body.ToJson().ToUtf8Bytes();
 
-                if (OnPublishedCallback != null)
-                {
-                    OnPublishedCallback();
-                }
+            PublishMessage(exchange ?? QueueNames.Exchange,
+                routingKey: queueName,
+                basicProperties: props, body: messageBytes);
+
+            if (OnPublishedCallback != null)
+            {
+                OnPublishedCallback();
             }
         }
 
@@ -191,22 +197,6 @@ namespace ServiceStack.RabbitMq
                 }
                 throw;
             }
-        }
-
-        private class AccessToken
-        {
-            private string token;
-            internal static readonly AccessToken __accessToken =
-                new AccessToken("lUjBZNG56eE9yd3FQdVFSTy9qeGl5dlI5RmZwamc4U05udl000");
-            private AccessToken(string token)
-            {
-                this.token = token;
-            }
-        }
-
-        protected IDisposable __requestAccess()
-        {
-            return LicenseUtils.RequestAccess(AccessToken.__accessToken, LicenseFeature.Client, LicenseFeature.Text);
         }
 
         public virtual void Dispose()

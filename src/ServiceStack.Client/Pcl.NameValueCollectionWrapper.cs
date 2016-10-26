@@ -32,21 +32,23 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using ServiceStack.Text;
 using ServiceStack.Web;
 
-#if PCL || SL5
+#if PCL || SL5 || NETSTANDARD1_1
 using ServiceStack.Pcl;
 #else
 using System.Collections.Specialized;
 #endif
 
-#if NETFX_CORE || ANDROID || __IOS__ || PCL || SL5
+#if NETFX_CORE || ANDROID || __IOS__ || __MAC__ || PCL || SL5 || NETSTANDARD1_1 || NETSTANDARD1_6
 //namespace System.Collections.Specialized
 namespace ServiceStack.Pcl
 {
     using System;
     using System.Net;
     using System.Text;
+    using ServiceStack.Text;
 
     public class HttpUtility
     {
@@ -57,7 +59,7 @@ namespace ServiceStack.Pcl
                 int count = Count;
                 if (count == 0)
                     return "";
-                StringBuilder sb = new StringBuilder();
+                var sb = StringBuilderCache.Allocate();
                 string[] keys = AllKeys;
                 for (int i = 0; i < count; i++)
                 {
@@ -65,7 +67,7 @@ namespace ServiceStack.Pcl
                 }
                 if (sb.Length > 0)
                     sb.Length--;
-                return sb.ToString();
+                return StringBuilderCache.ReturnAndFree(sb);
             }
         }
 
@@ -313,5 +315,26 @@ namespace ServiceStack
             }
             return nameValues;
         }
+
+        public static string ToFormUrlEncoded(this NameValueCollection queryParams)
+        {
+            var sb = StringBuilderCache.Allocate();
+            foreach (string key in queryParams)
+            {
+                var values = queryParams.GetValues(key);
+                if (values == null) continue;
+
+                foreach (var value in values)
+                {
+                    if (sb.Length > 0)
+                        sb.Append('&');
+
+                    sb.Append($"{key.UrlEncode()}={value.UrlEncode()}");
+                }
+            }
+
+            return StringBuilderCache.ReturnAndFree(sb);
+        }
+
     }
 }

@@ -12,12 +12,14 @@ namespace ServiceStack.NativeTypes.Swift
     public class SwiftGenerator
     {
         readonly MetadataTypesConfig Config;
-        readonly List<MetadataType> AllTypes;
+        readonly NativeTypesFeature feature;
+        List<MetadataType> AllTypes;
         List<string> conflictTypeNames = new List<string>();
 
         public SwiftGenerator(MetadataTypesConfig config)
         {
             Config = config;
+            feature = HostContext.GetPlugin<NativeTypesFeature>();
             AllTypes = new List<MetadataType>();
         }
 
@@ -50,6 +52,10 @@ namespace ServiceStack.NativeTypes.Swift
             "NSObject"
         };
 
+        public static Func<List<MetadataType>, List<MetadataType>> FilterTypes = DefaultFilterTypes;
+
+        public static List<MetadataType> DefaultFilterTypes(List<MetadataType> types) => types;
+
         public string GetCode(MetadataTypes metadata, IRequest request)
         {
             var typeNamespaces = new HashSet<string>();
@@ -64,7 +70,8 @@ namespace ServiceStack.NativeTypes.Swift
             Func<string, string> defaultValue = k =>
                 request.QueryString[k].IsNullOrEmpty() ? "//" : "";
 
-            var sb = new StringBuilderWrapper(new StringBuilder());
+            var sbInner = StringBuilderCache.Allocate();
+            var sb = new StringBuilderWrapper(sbInner);
             var sbExt = new StringBuilderWrapper(new StringBuilder());
             sb.AppendLine("/* Options:");
             sb.AppendLine("Date: {0}".Fmt(DateTime.Now.ToString("s").Replace("T", " ")));
@@ -82,6 +89,7 @@ namespace ServiceStack.NativeTypes.Swift
             sb.AppendLine("{0}ExcludeGenericBaseTypes: {1}".Fmt(defaultValue("ExcludeGenericBaseTypes"), Config.ExcludeGenericBaseTypes));
             sb.AppendLine("{0}AddResponseStatus: {1}".Fmt(defaultValue("AddResponseStatus"), Config.AddResponseStatus));
             sb.AppendLine("{0}AddImplicitVersion: {1}".Fmt(defaultValue("AddImplicitVersion"), Config.AddImplicitVersion));
+            sb.AppendLine("{0}AddDescriptionAsComments: {1}".Fmt(defaultValue("AddDescriptionAsComments"), Config.AddDescriptionAsComments));
             sb.AppendLine("{0}InitializeCollections: {1}".Fmt(defaultValue("InitializeCollections"), Config.InitializeCollections));
             sb.AppendLine("{0}TreatTypesAsStrings: {1}".Fmt(defaultValue("TreatTypesAsStrings"), Config.TreatTypesAsStrings.Safe().ToArray().Join(",")));
             sb.AppendLine("{0}DefaultImports: {1}".Fmt(defaultValue("DefaultImports"), defaultImports.Join(",")));
@@ -109,9 +117,11 @@ namespace ServiceStack.NativeTypes.Swift
             AllTypes.AddRange(responseTypes);
             AllTypes.AddRange(types);
 
+            AllTypes = FilterTypes(AllTypes);
+
             //Swift doesn't support reusing same type name with different generic airity
             var conflictPartialNames = AllTypes.Map(x => x.Name).Distinct()
-                .GroupBy(g => g.SplitOnFirst('`')[0])
+                .GroupBy(g => g.LeftPart('`'))
                 .Where(g => g.Count() > 1)
                 .Select(g => g.Key)
                 .ToList();
@@ -190,7 +200,7 @@ namespace ServiceStack.NativeTypes.Swift
                 sb.AppendLine(sbExt.ToString());
             }
 
-            return sb.ToString();
+            return StringBuilderCache.ReturnAndFree(sbInner);
         }
 
         //Use built-in types already in net.servicestack.client package
@@ -215,7 +225,7 @@ namespace ServiceStack.NativeTypes.Swift
             var hasGenericBaseType = type.Inherits != null && !type.Inherits.GenericArgs.IsEmpty();
             if (Config.ExcludeGenericBaseTypes && hasGenericBaseType)
             {
-                sb.AppendLine("//Excluded {0} : {1}<{2}>".Fmt(type.Name, type.Inherits.Name.SplitOnFirst('`')[0], string.Join(",", type.Inherits.GenericArgs)));
+                sb.AppendLine("//Excluded {0} : {1}<{2}>".Fmt(type.Name, type.Inherits.Name.LeftPart('`'), string.Join(",", type.Inherits.GenericArgs)));
                 return lastNS;
             }
 
@@ -343,8 +353,9 @@ namespace ServiceStack.NativeTypes.Swift
                     sb.AppendLine("public var {0}:Int = {1}".Fmt("Version".PropertyStyle(), Config.AddImplicitVersion));
                 }
 
+                var initCollections = feature.ShouldInitializeCollections(type, Config.InitializeCollections);
                 AddProperties(sb, type,
-                    initCollections: !type.IsInterface() && Config.InitializeCollections,
+                    initCollections: !type.IsInterface() && initCollections,
                     includeResponseStatus: Config.AddResponseStatus && options.IsResponse
                         && type.Properties.Safe().All(x => x.Name != typeof(ResponseStatus).Name));
 
@@ -413,7 +424,7 @@ namespace ServiceStack.NativeTypes.Swift
 
             var typeName = Type(type.Name, type.GenericArgs);
 
-            var typeNameOnly = typeName.SplitOnFirst('<')[0];
+            var typeNameOnly = typeName.LeftPart('<');
 
             sbExt.AppendLine();
             sbExt.AppendLine("extension {0} : JsonSerializable".Fmt(typeNameOnly));
@@ -613,7 +624,8 @@ namespace ServiceStack.NativeTypes.Swift
                     continue;
                 }
 
-                wasAdded = AppendDataMember(sb, prop.DataMember, dataMemberIndex++);
+                wasAdded = AppendComments(sb, prop.Description);
+                wasAdded = AppendDataMember(sb, prop.DataMember, dataMemberIndex++) || wasAdded;
                 wasAdded = AppendAttributes(sb, prop.Attributes) || wasAdded;
 
                 if (type.IsInterface())
@@ -650,7 +662,7 @@ namespace ServiceStack.NativeTypes.Swift
                 }
                 else
                 {
-                    var args = new StringBuilder();
+                    var args = StringBuilderCacheAlt.Allocate();
                     if (attr.ConstructorArgs != null)
                     {
                         foreach (var ctorArg in attr.ConstructorArgs)
@@ -669,7 +681,7 @@ namespace ServiceStack.NativeTypes.Swift
                             args.Append("{0}={1}".Fmt(attrArg.Name, TypeValue(attrArg.Type, attrArg.Value)));
                         }
                     }
-                    sb.AppendLine("// @{0}({1})".Fmt(attr.Name, args));
+                    sb.AppendLine("// @{0}({1})".Fmt(attr.Name, StringBuilderCacheAlt.ReturnAndFree(args)));
                 }
             }
 
@@ -687,7 +699,7 @@ namespace ServiceStack.NativeTypes.Swift
             if (value.StartsWith("typeof("))
             {
                 //Only emit type as Namespaces are merged
-                var typeNameOnly = value.Substring(7, value.Length - 8).SplitOnLast('.').Last();
+                var typeNameOnly = value.Substring(7, value.Length - 8).LastRightPart('.');
                 return "typeof(" + typeNameOnly + ")";
             }
 
@@ -722,7 +734,9 @@ namespace ServiceStack.NativeTypes.Swift
             if (foundType != null)
                 return foundType;
 
-            if (typeName.Name == typeof(QueryBase).Name || typeName.Name == typeof(QueryBase<>).Name)
+            if (typeName.Name == typeof(QueryBase).Name || 
+                typeName.Name == typeof(QueryBase<>).Name || 
+                typeName.Name == typeof(QueryDb<>).Name)
                 return CreateType(typeof(QueryBase)); //Properties are on QueryBase
 
 
@@ -802,7 +816,7 @@ namespace ServiceStack.NativeTypes.Swift
                 var parts = type.Split('`');
                 if (parts.Length > 1)
                 {
-                    var args = new StringBuilder();
+                    var args = StringBuilderCacheAlt.Allocate();
                     foreach (var arg in genericArgs)
                     {
                         if (args.Length > 0)
@@ -812,7 +826,7 @@ namespace ServiceStack.NativeTypes.Swift
                     }
 
                     var typeName = TypeAlias(type);
-                    return "{0}<{1}>".Fmt(typeName, args);
+                    return "{0}<{1}>".Fmt(typeName, StringBuilderCacheAlt.ReturnAndFree(args));
                 }
             }
 
@@ -836,18 +850,20 @@ namespace ServiceStack.NativeTypes.Swift
         {
             var name = conflictTypeNames.Contains(type)
                 ? type.Replace('`', '_')
-                : type.SplitOnFirst('`')[0];
+                : type.LeftPart('`');
 
-            return name.SplitOnLast('.').Last().SafeToken();
+            return name.LastRightPart('.').SafeToken();
         }
 
-        public void AppendComments(StringBuilderWrapper sb, string desc)
+        public bool AppendComments(StringBuilderWrapper sb, string desc)
         {
-            if (desc == null) return;
-
-            sb.AppendLine("/**");
-            sb.AppendLine("* {0}".Fmt(desc.SafeComment()));
-            sb.AppendLine("*/");
+            if (desc != null && Config.AddDescriptionAsComments)
+            {
+                sb.AppendLine("/**");
+                sb.AppendLine("* {0}".Fmt(desc.SafeComment()));
+                sb.AppendLine("*/");
+            }
+            return false;
         }
 
         public void AppendDataContract(StringBuilderWrapper sb, MetadataDataContract dcMeta)
@@ -976,7 +992,7 @@ namespace ServiceStack.NativeTypes.Swift
             }
 
             var typeName = sb.ToString();
-            return typeName.SplitOnLast('.').Last(); //remove nested class
+            return typeName.LastRightPart('.'); //remove nested class
         }
     }
 

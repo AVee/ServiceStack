@@ -77,7 +77,7 @@ namespace ServiceStack.WebHost.Endpoints.Tests
         public async Task Does_add_HttpHeaders_in_RequestFilter_for_Get_Async()
         {
             var client = (JsonServiceClient)GetClient();
-            client.RequestFilter = req => req.Headers.Add("Foo", "Bar");
+            client.RequestFilter = req => req.Headers["Foo"] = "Bar";
 
             var response = await client.GetAsync(new EchoRequestInfo());
 
@@ -374,21 +374,21 @@ namespace ServiceStack.WebHost.Endpoints.Tests
         }
 
         [Test]
-        public void Does_SendRestGet_as_GET_using_Predefined_Route()
+        public void Does_SendRestGet_as_GET()
         {
             var response = client.Send(new SendRestGet { Id = 1 });
             Assert.That(response.Id, Is.EqualTo(1));
             Assert.That(response.RequestMethod, Is.EqualTo(HttpMethods.Get));
-            Assert.That(response.PathInfo, Is.EqualTo("/json/reply/SendRestGet"));
+            Assert.That(response.PathInfo, Is.EqualTo("/sendrestget/1"));
         }
 
         [Test]
-        public async Task Does_SendRestGet_as_GET_using_Predefined_Route_Async()
+        public async Task Does_SendRestGet_as_GET_Async()
         {
             var response = await client.SendAsync(new SendRestGet { Id = 1 });
             Assert.That(response.Id, Is.EqualTo(1));
             Assert.That(response.RequestMethod, Is.EqualTo(HttpMethods.Get));
-            Assert.That(response.PathInfo, Is.EqualTo("/json/reply/SendRestGet"));
+            Assert.That(response.PathInfo, Is.EqualTo("/sendrestget/1"));
         }
 
         [Test]

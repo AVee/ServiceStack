@@ -21,13 +21,13 @@ using ServiceStack.IO;
 using ServiceStack.Logging;
 using ServiceStack.Messaging;
 using ServiceStack.Metadata;
-using ServiceStack.MiniProfiler.UI;
 using ServiceStack.NativeTypes;
 using ServiceStack.Serialization;
 using ServiceStack.Text;
 using ServiceStack.VirtualPath;
 using ServiceStack.Web;
 using ServiceStack.Redis;
+using static System.String;
 
 namespace ServiceStack
 {
@@ -38,20 +38,43 @@ namespace ServiceStack
 
         public static ServiceStackHost Instance { get; protected set; }
 
+        /// <summary>
+        /// When the AppHost was instantiated.
+        /// </summary>
         public DateTime StartedAt { get; set; }
+        /// <summary>
+        /// When the Init function was done.
+        /// Called at begin of <see cref="OnAfterInit"/>
+        /// </summary>
         public DateTime? AfterInitAt { get; set; }
+        /// <summary>
+        /// When all configuration was completed.
+        /// Called at the end of <see cref="OnAfterInit"/>
+        /// </summary>
         public DateTime? ReadyAt { get; set; }
+        /// <summary>
+        /// If app currently runs for unit tests.
+        /// Used for overwritting AuthSession.
+        /// </summary>
         public bool TestMode { get; set; }
 
-        public bool HasStarted
-        {
-            get { return ReadyAt != null; }
-        }
+        /// <summary>
+        /// The assemblies reflected to find api services.
+        /// These can be provided in the constructor call.
+        /// </summary>
+        public Assembly[] ServiceAssemblies { get; private set; }
 
-        public static bool IsReady()
-        {
-            return Instance != null && Instance.ReadyAt != null;
-        }
+        /// <summary>
+        /// Wether AppHost configuration is done.
+        /// Note: It doesn't mean the start function was called.
+        /// </summary>
+        public bool HasStarted => ReadyAt != null;
+
+        /// <summary>
+        /// Wether AppHost is ready configured and either ready to run or already running.
+        /// Equals <see cref="HasStarted"/>
+        /// </summary>
+        public static bool IsReady() => Instance?.ReadyAt != null;
 
         protected ServiceStackHost(string serviceName, params Assembly[] assembliesWithServices)
         {
@@ -60,6 +83,7 @@ namespace ServiceStack
             ServiceName = serviceName;
             AppSettings = new AppSettings();
             Container = new Container { DefaultOwner = Owner.External };
+            ServiceAssemblies = assembliesWithServices;
             ServiceController = CreateServiceController(assembliesWithServices);
 
             ContentTypes = Host.ContentTypes.Instance;
@@ -77,6 +101,8 @@ namespace ServiceStack
             GlobalTypedMessageRequestFilters = new Dictionary<Type, ITypedFilter>();
             GlobalMessageResponseFilters = new List<Action<IRequest, IResponse, object>>();
             GlobalTypedMessageResponseFilters = new Dictionary<Type, ITypedFilter>();
+            GatewayRequestFilters = new List<Action<IRequest, object>>();
+            GatewayResponseFilters = new List<Action<IRequest, object>>();
             ViewEngines = new List<IViewEngine>();
             ServiceExceptionHandlers = new List<HandleServiceExceptionDelegate>();
             UncaughtExceptionHandlers = new List<HandleUncaughtExceptionDelegate>();
@@ -85,7 +111,9 @@ namespace ServiceStack
             OnEndRequestCallbacks = new List<Action<IRequest>>();
             RawHttpHandlers = new List<Func<IHttpRequest, IHttpHandler>> {
                  HttpHandlerFactory.ReturnRequestInfo,
-                 MiniProfilerHandler.MatchesRequest,
+#if !NETSTANDARD1_6
+                 ServiceStack.MiniProfiler.UI.MiniProfilerHandler.MatchesRequest,
+#endif
             };
             CatchAllHandlers = new List<HttpHandlerResolverDelegate>();
             CustomErrorHttpHandlers = new Dictionary<HttpStatusCode, IServiceStackHandler> {
@@ -93,6 +121,7 @@ namespace ServiceStack
                 { HttpStatusCode.NotFound, new NotFoundHttpHandler() },
             };
             StartUpErrors = new List<ResponseStatus>();
+            AsyncErrors = new List<ResponseStatus>();
             PluginsLoaded = new List<string>();
             Plugins = new List<IPlugin> {
                 new HtmlFormat(),
@@ -101,6 +130,7 @@ namespace ServiceStack
                 new PredefinedRoutesFeature(),
                 new MetadataFeature(),
                 new NativeTypesFeature(),
+                new HttpCacheFeature(),
             };
             ExcludeAutoRegisteringServiceTypes = new HashSet<Type> {
                 typeof(AuthenticateService),
@@ -123,23 +153,30 @@ namespace ServiceStack
             //return new ServiceController(this, () => assembliesWithServices.ToList().SelectMany(x => x.GetTypes()));
         }
 
+        /// <summary>
+        /// Set the host config of the AppHost.
+        /// </summary>
         public virtual void SetConfig(HostConfig config)
         {
             Config = config;
         }
 
+        /// <summary>
+        /// Initializes the AppHost.
+        /// Calls the <see cref="Configure"/> method.
+        /// Should be called before start.
+        /// </summary>
         public virtual ServiceStackHost Init()
         {
             if (Instance != null)
-            {
-                throw new InvalidDataException("ServiceStackHost.Instance has already been set");
-            }
+                throw new InvalidDataException($"ServiceStackHost.Instance has already been set ({Instance.GetType().Name})");
+
             Service.GlobalResolver = Instance = this;
 
             Config = HostConfig.ResetInstance();
             OnConfigLoad();
 
-            Config.DebugMode = GetType().Assembly.IsDebugBuild();
+            Config.DebugMode = GetType().GetAssembly().IsDebugBuild();
             if (Config.DebugMode)
             {
                 Plugins.Add(new RequestInfoFeature());
@@ -151,17 +188,19 @@ namespace ServiceStack
 
             ConfigurePlugins();
 
-            if (VirtualFiles == null)
-                VirtualFiles = GetFileSystemProvider();
-
+            List<IVirtualPathProvider> pathProviders = null;
             if (VirtualFileSources == null)
             {
-                var pathProviders = GetVirtualFileSources().Where(x => x != null).ToList();
+                pathProviders = GetVirtualFileSources().Where(x => x != null).ToList();
 
                 VirtualFileSources = pathProviders.Count > 1
                     ? new MultiVirtualPathProvider(this, pathProviders.ToArray())
                     : pathProviders.First();
             }
+
+            if (VirtualFiles == null)
+                VirtualFiles = pathProviders?.FirstOrDefault(x => x is FileSystemVirtualPathProvider) as IVirtualFiles
+                    ?? GetVirtualFileSources().FirstOrDefault(x => x is FileSystemVirtualPathProvider) as IVirtualFiles;
 
             OnAfterInit();
 
@@ -199,10 +238,15 @@ namespace ServiceStack
             return GetVirtualFileSources();
         }
 
+        /// <summary>
+        /// Gets Full Directory Path of where the app is running
+        /// </summary>
+        public virtual string GetWebRootPath() => Config.WebHostPhysicalPath;
+
         public virtual List<IVirtualPathProvider> GetVirtualFileSources()
         {
             var pathProviders = new List<IVirtualPathProvider> {
-                new FileSystemVirtualPathProvider(this, Config.WebHostPhysicalPath)
+                new FileSystemVirtualPathProvider(this, GetWebRootPath())
             };
 
             pathProviders.AddRange(Config.EmbeddedResourceBaseTypes.Distinct()
@@ -214,12 +258,11 @@ namespace ServiceStack
             return pathProviders;
         }
 
-        public virtual IVirtualFiles GetFileSystemProvider()
-        {
-            var fs = GetVirtualFileSources().FirstOrDefault(x => x is FileSystemVirtualPathProvider);
-            return fs as IVirtualFiles;
-        }
-
+        /// <summary>
+        /// Starts the AppHost.
+        /// this methods needs to be overwritten in subclass to provider a listener to start handling requests.
+        /// </summary>
+        /// <param name="urlBase">Url to listen to</param>
         public virtual ServiceStackHost Start(string urlBase)
         {
             throw new NotImplementedException("Start(listeningAtUrlBase) is not supported by this AppHost");
@@ -264,23 +307,40 @@ namespace ServiceStack
         /// <summary>
         /// The AppHost.Container. Note: it is not thread safe to register dependencies after AppStart.
         /// </summary>
-        public Container Container { get; private set; }
+        public virtual Container Container { get; private set; }
 
         public IServiceRoutes Routes { get; set; }
 
-        public List<RestPath> RestPaths = new List<RestPath>();
+        public List<RestPath> RestPaths;
 
-        public Dictionary<Type, Func<IRequest, object>> RequestBinders
-        {
-            get { return ServiceController.RequestTypeFactoryMap; }
-        }
+        public Dictionary<Type, Func<IRequest, object>> RequestBinders => ServiceController.RequestTypeFactoryMap;
 
         public IContentTypes ContentTypes { get; set; }
 
+        /// <summary>
+        /// Collection of PreRequest filters.
+        /// They are called before each request is handled by a service, but after an HttpHandler is by the <see cref="HttpHandlerFactory"/> chosen.
+        /// called in <see cref="ApplyPreRequestFilters"/>.
+        /// </summary>
         public List<Action<IRequest, IResponse>> PreRequestFilters { get; set; }
 
+        /// <summary>
+        /// Collection of RequestConverters.
+        /// Can be used to convert/change Input Dto
+        /// Called after routing and model binding, but before request filters.
+        /// All request converters are called unless <see cref="IResponse.IsClosed"></see>
+        /// Converter can return null, orginal model will be used.
+        /// 
+        /// Note one converter could influence the input for the next converter!
+        /// </summary>
         public List<Func<IRequest, object, object>> RequestConverters { get; set; }
 
+        /// <summary>
+        /// Collection of ResponseConverters.
+        /// Can be used to convert/change Output Dto
+        /// 
+        /// Called directly after response is handled, even before <see cref="ApplyResponseFilters"></see>!
+        /// </summary>
         public List<Func<IRequest, object, object>> ResponseConverters { get; set; }
 
         public List<Action<IRequest, IResponse, object>> GlobalRequestFilters { get; set; }
@@ -291,14 +351,18 @@ namespace ServiceStack
 
         public Dictionary<Type, ITypedFilter> GlobalTypedResponseFilters { get; set; }
 
-        public List<Action<IRequest, IResponse, object>> GlobalMessageRequestFilters { get; private set; }
+        public List<Action<IRequest, IResponse, object>> GlobalMessageRequestFilters { get; }
 
         public Dictionary<Type, ITypedFilter> GlobalTypedMessageRequestFilters { get; set; }
 
-        public List<Action<IRequest, IResponse, object>> GlobalMessageResponseFilters { get; private set; }
+        public List<Action<IRequest, IResponse, object>> GlobalMessageResponseFilters { get; }
 
         public Dictionary<Type, ITypedFilter> GlobalTypedMessageResponseFilters { get; set; }
 
+        /// <summary>
+        /// Lists of view engines for this app.
+        /// If view is needed list is looped until view is found.
+        /// </summary>
         public List<IViewEngine> ViewEngines { get; set; }
 
         public List<HandleServiceExceptionDelegate> ServiceExceptionHandlers { get; set; }
@@ -321,13 +385,22 @@ namespace ServiceStack
 
         public List<ResponseStatus> StartUpErrors { get; set; }
 
+        public List<ResponseStatus> AsyncErrors { get; set; }
+
         public List<string> PluginsLoaded { get; set; }
 
+        /// <summary>
+        /// Collection of added plugins.
+        /// </summary>
         public List<IPlugin> Plugins { get; set; }
 
         public IVirtualFiles VirtualFiles { get; set; }
 
         public IVirtualPathProvider VirtualFileSources { get; set; }
+
+        public List<Action<IRequest, object>> GatewayRequestFilters { get; set; }
+
+        public List<Action<IRequest, object>> GatewayResponseFilters { get; set; }
 
         [Obsolete("Renamed to VirtualFileSources")]
         public IVirtualPathProvider VirtualPathProvider
@@ -383,7 +456,7 @@ namespace ServiceStack
         {
             //Only add custom error messages to StatusDescription
             var httpError = ex as IHttpError;
-            var errorMessage = httpError != null ? httpError.Message : null;
+            var errorMessage = httpError?.Message;
             var statusCode = ex.ToStatusCode();
 
             //httpRes.WriteToResponse always calls .Close in it's finally statement so 
@@ -499,6 +572,14 @@ namespace ServiceStack
             if (config.HandlerFactoryPath != null)
                 config.HandlerFactoryPath = config.HandlerFactoryPath.TrimStart('/');
 
+            if (config.UseCamelCase)
+                JsConfig.EmitCamelCaseNames = true;
+
+            if (config.EnableOptimizations)
+            {
+                MemoryStreamFactory.UseRecyclableMemoryStream = true;
+            }
+
             var specifiedContentType = config.DefaultContentType; //Before plugins loaded
 
             var plugins = Plugins.ToArray();
@@ -518,8 +599,11 @@ namespace ServiceStack
                 if (Container.Exists<IRedisClientsManager>())
                     Container.Register(c => c.Resolve<IRedisClientsManager>().GetCacheClient());
                 else
-                    Container.Register<ICacheClient>(new MemoryCacheClient());
+                    Container.Register<ICacheClient>(ServiceExtensions.DefaultCache);
             }
+
+            if (!Container.Exists<MemoryCacheClient>())
+                Container.Register(ServiceExtensions.DefaultCache);
 
             if (Container.Exists<IMessageService>()
                 && !Container.Exists<IMessageFactory>())
@@ -531,6 +615,22 @@ namespace ServiceStack
                 && !Container.Exists<IAuthRepository>())
             {
                 Container.Register<IAuthRepository>(c => c.Resolve<IUserAuthRepository>());
+            }
+
+            if (config.LogUnobservedTaskExceptions)
+            {
+                System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (sender, args) =>
+                {
+                    args.SetObserved();
+                    args.Exception.Handle(ex =>
+                    {
+                        lock (AsyncErrors)
+                        {
+                            AsyncErrors.Add(DtoUtils.CreateErrorResponse(null, ex).GetResponseStatus());
+                            return true;
+                        }
+                    });
+                };
             }
 
             foreach (var callback in AfterInitCallbacks)
@@ -570,9 +670,9 @@ namespace ServiceStack
 
         private void AfterPluginsLoaded(string specifiedContentType)
         {
-            if (!String.IsNullOrEmpty(specifiedContentType))
+            if (!IsNullOrEmpty(specifiedContentType))
                 config.DefaultContentType = specifiedContentType;
-            else if (String.IsNullOrEmpty(config.DefaultContentType))
+            else if (IsNullOrEmpty(config.DefaultContentType))
                 config.DefaultContentType = MimeTypes.Json;
 
             Config.PreferredContentTypes.Remove(Config.DefaultContentType);
@@ -611,8 +711,7 @@ namespace ServiceStack
                 else
                 {
                     var disposable = instance as IDisposable;
-                    if (disposable != null)
-                        disposable.Dispose();
+                    disposable?.Dispose();
                 }
             }
             catch (Exception ex)
@@ -644,26 +743,46 @@ namespace ServiceStack
             }
         }
 
+        /// <summary>
+        /// Register singleton in the Ioc Container of the AppHost.
+        /// </summary>
         public virtual void Register<T>(T instance)
         {
             this.Container.Register(instance);
         }
 
+        /// <summary>
+        /// Registers type to be automatically wired by the Ioc container of the AppHost.
+        /// </summary>
+        /// <typeparam name="T">Concrete type</typeparam>
+        /// <typeparam name="TAs">Abstract type</typeparam>
         public virtual void RegisterAs<T, TAs>() where T : TAs
         {
             this.Container.RegisterAutoWiredAs<T, TAs>();
         }
 
+        /// <summary>
+        /// Tries to resolve type through the ioc container of the AppHost. 
+        /// Can return null.
+        /// </summary>
         public virtual T TryResolve<T>()
         {
             return this.Container.TryResolve<T>();
         }
 
+        /// <summary>
+        /// Resolves Type through the Ioc container of the AppHost.
+        /// </summary>
+        /// <exception cref="ResolutionException">If type is not registered</exception>
         public virtual T Resolve<T>()
         {
             return this.Container.Resolve<T>();
         }
 
+        /// <summary>
+        /// Looks for first plugin of this type in Plugins.
+        /// Reflection performance penalty.
+        /// </summary>
         public T GetPlugin<T>() where T : class, IPlugin
         {
             return Plugins.FirstOrDefault(x => x is T) as T;
@@ -691,6 +810,30 @@ namespace ServiceStack
                 return (Config.WebHostUrl ?? "/").CombineWith(virtualPath.TrimStart('~'));
 
             return httpReq.GetAbsoluteUrl(virtualPath); //Http Listener, TODO: ASP.NET overrides
+        }
+
+        public virtual bool UseHttps(IRequest httpReq)
+        {
+            return Config.UseHttpsLinks || httpReq.GetHeader(HttpHeaders.XForwardedProtocol) == "https";
+        }
+
+        public virtual string GetBaseUrl(IRequest httpReq)
+        {
+            var useHttps = UseHttps(httpReq);
+            var baseUrl = HttpHandlerFactory.GetBaseUrl();
+            if (baseUrl != null)
+                return baseUrl.NormalizeScheme(useHttps);
+
+            baseUrl = httpReq.AbsoluteUri.InferBaseUrl(fromPathInfo: httpReq.PathInfo);
+            if (baseUrl != null)
+                return baseUrl.NormalizeScheme(useHttps);
+
+            var handlerPath = Config.HandlerFactoryPath;
+
+            return new Uri(httpReq.AbsoluteUri).GetLeftAuthority()
+                .NormalizeScheme(useHttps)
+                .CombineWith(handlerPath)
+                .TrimEnd('/');
         }
 
         public virtual string ResolvePhysicalPath(string virtualPath, IRequest httpReq)
@@ -789,6 +932,11 @@ namespace ServiceStack
             }
         }
 
+        public void RegisterServicesInAssembly(Assembly assembly)
+        {
+            ServiceController.RegisterServicesInAssembly(assembly);
+        }
+
         public virtual RouteAttribute[] GetRouteAttributes(Type requestType)
         {
             return requestType.AllAttributes<RouteAttribute>();
@@ -828,22 +976,43 @@ namespace ServiceStack
             GlobalTypedMessageResponseFilters[typeof(T)] = new TypedFilter<T>(filterFn);
         }
 
-        public virtual void Dispose()
+        public virtual string MapProjectPath(string relativePath)
         {
-            foreach (var callback in OnDisposeCallbacks)
+            return relativePath.MapProjectPath();
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (disposing)
             {
-                callback(this);
+                //clear managed resources here
+                foreach (var callback in OnDisposeCallbacks)
+                {
+                    callback(this);
+                }
+
+                if (Container != null)
+                {
+                    Container.Dispose();
+                    Container = null;
+                }
+
+                JsConfig.Reset(); //Clears Runtime Attributes
+
+                Instance = null;
             }
+            //clear unmanaged resources here
+        }
 
-            if (Container != null)
-            {
-                Container.Dispose();
-                Container = null;
-            }
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
 
-            JsConfig.Reset(); //Clears Runtime Attributes
-
-            Instance = null;
+        ~ServiceStackHost()
+        {
+            Dispose(false);
         }
     }
 }

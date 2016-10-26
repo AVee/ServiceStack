@@ -15,6 +15,10 @@ namespace ServiceStack.Messaging
 
         public static IMessage Create(object response)
         {
+            var responseMessage = response as IMessage;
+            if (responseMessage != null)
+                return responseMessage;
+
             if (response == null) return null;
             var type = response.GetType();
 
@@ -25,7 +29,7 @@ namespace ServiceStack.Messaging
                 return factoryFn(response);
 
             var genericMessageType = typeof(Message<>).MakeGenericType(type);
-#if NETFX_CORE
+#if NETFX_CORE || NETSTANDARD1_1
             var mi = genericMessageType.GetRuntimeMethods().First(p => p.Name.Equals("Create"));
             factoryFn = (MessageFactoryDelegate)mi.CreateDelegate(
                 typeof(MessageFactoryDelegate));
@@ -53,6 +57,7 @@ namespace ServiceStack.Messaging
         public int Options { get; set; }
         public ResponseStatus Error { get; set; }
         public string Tag { get; set; }
+        public Dictionary<string, string> Meta { get; set; }
         public object Body { get; set; }
     }
 

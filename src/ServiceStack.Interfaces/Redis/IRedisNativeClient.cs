@@ -5,7 +5,7 @@
 // Authors:
 //   Demis Bellot (demis.bellot@gmail.com)
 //
-// Copyright 2015 Service Stack LLC. All Rights Reserved.
+// Copyright 2016 Service Stack LLC. All Rights Reserved.
 //
 // Licensed under the same terms of ServiceStack.
 //
@@ -160,6 +160,7 @@ namespace ServiceStack.Redis
         long ZAdd(string setId, double score, byte[] value);
         long ZAdd(string setId, long score, byte[] value);
         long ZRem(string setId, byte[] value);
+        long ZRem(string setId, byte[][] values);
         double ZIncrBy(string setId, double incrBy, byte[] value);
         double ZIncrBy(string setId, long incrBy, byte[] value);
         long ZRank(string setId, byte[] value);
@@ -201,6 +202,17 @@ namespace ServiceStack.Redis
         byte[][] HKeys(string hashId);
         byte[][] HVals(string hashId);
         byte[][] HGetAll(string hashId);
+
+        //Redis GEO operations
+        long GeoAdd(string key, double longitude, double latitude, string member);
+        long GeoAdd(string key, params RedisGeo[] geoPoints);
+        double GeoDist(string key, string fromMember, string toMember, string unit = null);
+        string[] GeoHash(string key, params string[] members);
+        List<RedisGeo> GeoPos(string key, params string[] members);
+        List<RedisGeoResult> GeoRadius(string key, double longitude, double latitude, double radius, string unit,
+            bool withCoords = false, bool withDist = false, bool withHash = false, int? count = null, bool? asc = null);
+        List<RedisGeoResult> GeoRadiusByMember(string key, string member, double radius, string unit,
+            bool withCoords = false, bool withDist = false, bool withHash = false, int? count = null, bool? asc = null);
 
         //Redis Pub/Sub operations
         void Watch(params string[] keys);

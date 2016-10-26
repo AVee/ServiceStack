@@ -1,3 +1,4 @@
+#if !NETCORE
 using NUnit.Framework;
 using ServiceStack.Host;
 using ServiceStack.Metadata;
@@ -22,7 +23,7 @@ namespace ServiceStack.WebHost.Endpoints.Tests
                 appHost.Metadata.Add(dummyServiceType, typeof(GetCustomers), typeof(GetCustomersResponse));
                 appHost.Metadata.Add(dummyServiceType, typeof(StoreCustomer), null);
 
-                var wsdlGenerator = new Soap11WsdlMetadataHandler();
+                var wsdlGenerator = new Soap12WsdlMetadataHandler();
                 var xsdMetadata = new XsdMetadata(appHost.Metadata);
                 var wsdlTemplate = wsdlGenerator.GetWsdlTemplate(xsdMetadata, "http://w3c.org/types", false, "http://w3c.org/types", "Service Name");
 
@@ -53,3 +54,4 @@ namespace ServiceStack.WebHost.Endpoints.Tests
 
 	}
 }
+#endif

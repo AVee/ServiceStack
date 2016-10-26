@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Runtime.Serialization;
@@ -13,12 +14,12 @@ namespace ServiceStack.WebHost.Endpoints.Tests
 {
     public class CustomValidationAppHost : AppHostHttpListenerBase
     {
-        public CustomValidationAppHost() : base("Custom Error", typeof(CustomValidationAppHost).Assembly) { }
+        public CustomValidationAppHost() : base("Custom Error", typeof(CustomValidationAppHost).GetAssembly()) { }
 
         public override void Configure(Container container)
         {
             Plugins.Add(new ValidationFeature { ErrorResponseFilter = CustomValidationError });
-            container.RegisterValidators(typeof(MyValidator).Assembly);
+            container.RegisterValidators(typeof(MyValidator).GetAssembly());
         }
 
         public static object CustomValidationError(ValidationResult validationResult, object errorDto)
@@ -51,9 +52,51 @@ namespace ServiceStack.WebHost.Endpoints.Tests
         }
     }
 
+    [Route("/customrequesterror/{Name}")]
+    public class CustomRequestError
+    {
+        public string Name { get; set; }
+
+        public List<CustomRequestItem> Items { get; set; }
+    }
+
+    public class CustomRequestItem
+    {
+        public string Name { get; set; }
+    }
+
+    public class MyRequestValidator : AbstractValidator<CustomRequestError>
+    {
+        public MyRequestValidator()
+        {
+            RuleSet(ApplyTo.Post | ApplyTo.Put | ApplyTo.Get, () =>
+            {
+                var req = base.Request;
+                RuleFor(c => c.Name)
+                    .Must(x => !base.Request.PathInfo.ContainsAny("-", ".", " "));
+
+                RuleFor(x => x.Items).SetCollectionValidator(new MyRequestItemValidator());
+            });
+        }
+    }
+
+    public class MyRequestItemValidator : AbstractValidator<CustomRequestItem>
+    {
+        public MyRequestItemValidator()
+        {
+            RuleFor(x => x.Name)
+                .Must(x => !base.Request.QueryString["Items"].ContainsAny("-", ".", " "));
+        }
+    }
+
     public class CustomValidationService : Service
     {
         public object Get(CustomError request)
+        {
+            return request;
+        }
+
+        public object Any(CustomRequestError request)
         {
             return request;
         }
@@ -105,6 +148,38 @@ namespace ServiceStack.WebHost.Endpoints.Tests
             {
                 var body = ex.GetResponseBody();
                 Assert.That(body, Is.EqualTo("{\"code\":\"GreaterThan\",\"error\":\"'Age' must be greater than '0'.\"}"));
+            }
+        }
+
+        [Test]
+        public void Can_access_Request_in_Validator()
+        {
+            try
+            {
+                var response = "{0}/customrequesterror/the.name".Fmt(Config.ServiceStackBaseUri)
+                    .GetJsonFromUrl();
+                Assert.Fail("Should throw HTTP Error");
+            }
+            catch (Exception ex)
+            {
+                var body = ex.GetResponseBody();
+                Assert.That(body, Is.EquivalentTo("{\"code\":\"Predicate\",\"error\":\"The specified condition was not met for 'Name'.\"}"));
+            }
+        }
+
+        [Test]
+        public void Can_access_Request_in_item_collection_Validator()
+        {
+            try
+            {
+                var response = (Config.ServiceStackBaseUri + "/customrequesterror/thename?items=[{name:item.name}]")
+                    .GetJsonFromUrl();
+                Assert.Fail("Should throw HTTP Error");
+            }
+            catch (Exception ex)
+            {
+                var body = ex.GetResponseBody();
+                Assert.That(body, Is.EqualTo("{\"code\":\"Predicate\",\"error\":\"The specified condition was not met for 'Name'.\"}"));
             }
         }
 
@@ -189,7 +264,7 @@ namespace ServiceStack.WebHost.Endpoints.Tests
 
             var fieldError = status.Errors[0];
             Assert.That(fieldError.FieldName, Is.EqualTo("Int"));
-            Assert.That(fieldError.ErrorCode, Is.EqualTo(typeof (SerializationException).Name));
+            Assert.That(fieldError.ErrorCode, Is.EqualTo(typeof(SerializationException).Name));
             Assert.That(fieldError.Message, Is.EqualTo("'string' is an Invalid value for 'Int'"));
 
             var fieldError2 = status.Errors[1];
